@@ -8,6 +8,9 @@ const product = {
   productType: 'unit',
   pricePerType: 100,
   step: 1,
+  minQuantity: 1,
+  decimalScale: 0,
+  unitSymbol: 'u',
   quantity: 1,
   maxQuantityPerOrder: 10,
   isSoldOut: false

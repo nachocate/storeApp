@@ -2,6 +2,7 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { requestStoreApi } from '../api/store.js'
 import { STORE_SLUG } from '../config/store.js'
 import { formatCurrency } from '../utils/formatCurrency.js'
+import { formatQuantity, roundQuantity } from '../utils/quantityRules.js'
 
 const CART_STORAGE_KEY = `vitrinapp-cart-${encodeURIComponent(STORE_SLUG)}`
 
@@ -95,9 +96,9 @@ export const useVisitorCart = ({ products }) => {
           product.stock ?? Number.POSITIVE_INFINITY,
           product.maxQuantityPerOrder ?? Number.POSITIVE_INFINITY
         )
-        if (limit < product.step) return []
+        if (limit < product.minQuantity) return []
 
-        return [{ id: product.id, quantity: Math.min(limit, Math.max(product.step, quantity)) }]
+        return [{ id: product.id, quantity: Math.min(limit, Math.max(product.minQuantity, quantity)) }]
       })
 
       cartToken.value = savedCart.token
@@ -133,24 +134,9 @@ export const useVisitorCart = ({ products }) => {
   const isProductLimitReached = (product) =>
     getProductQuantity(product) + product.step > getProductLimit(product)
 
-  const formatQuantityLabel = (product) => {
-    const quantity = getProductQuantity(product)
-    if (product.productType === 'weight') {
-      return quantity >= 1
-        ? `${Number(quantity.toFixed(2))} kg`
-        : `${Math.round(quantity * 1000)} g`
-    }
-    return `${quantity.toFixed(0)} u`
-  }
+  const formatQuantityLabel = (product) => formatQuantity(getProductQuantity(product), product)
 
-  const formatCartQuantity = (quantity, productType) => {
-    if (productType === 'weight') {
-      return quantity >= 1
-        ? `${Number(quantity.toFixed(2))} kg`
-        : `${Math.round(quantity * 1000)} g`
-    }
-    return `${quantity.toFixed(0)} u`
-  }
+  const formatCartQuantity = (quantity, product) => formatQuantity(quantity, product)
 
   const formatCartAmount = (amount) => formatCurrency(amount, cartTotals.currency || 'ARS')
 
@@ -321,7 +307,7 @@ export const useVisitorCart = ({ products }) => {
     const current = getProductQuantity(product)
     const next = Math.min(
       getProductLimit(product),
-      Math.max(product.step, Number((current + delta).toFixed(2)))
+      Math.max(product.minQuantity, roundQuantity(current + delta, product.decimalScale))
     )
     productQty.value[product.id] = next
 
@@ -356,10 +342,10 @@ export const useVisitorCart = ({ products }) => {
     const product = products.find((entry) => entry.id === productId)
     if (!item || !product) return
 
-    const nextQuantity = Number((item.quantity + product.step * delta).toFixed(2))
+    const nextQuantity = roundQuantity(item.quantity + product.step * delta, product.decimalScale)
     if (nextQuantity === item.quantity) return
 
-    if (nextQuantity <= 0) {
+    if (nextQuantity < product.minQuantity) {
       cart.value = cart.value.filter((entry) => entry.id !== productId)
       productQty.value[productId] = product.quantity
       queueCartRequest(productId, null)
@@ -377,7 +363,7 @@ export const useVisitorCart = ({ products }) => {
     if (!product) return
 
     cart.value = cart.value.filter((entry) => entry.id !== productId)
-    productQty.value[productId] = product.step
+    productQty.value[productId] = product.minQuantity
     queueCartRequest(productId, null)
   }
 

@@ -13,7 +13,6 @@ export const useStoreOrders = ({
 } = {}) => {
   const storageKey = `vitrinapp-orders-${encodeURIComponent(storeSlug)}`
   const orders = ref([])
-  const loading = ref(false)
   const orderErrors = reactive({})
   const transferErrors = reactive({})
   const transferSuccess = reactive({})
@@ -87,44 +86,47 @@ export const useStoreOrders = ({
     persistOrders()
   }
 
-  const refreshOrder = async (orderId) => {
+  // Used by the tracking view: keeps finished orders visible and reports lost access explicitly.
+  const syncOrder = async (orderId) => {
     const order = orders.value.find((item) => item.orderId === orderId)
-    if (!order) return null
-    if (Number(order.expiresAt) <= now()) {
-      removeOrder(orderId)
-      return null
+    if (!order || Number(order.expiresAt) <= now()) {
+      if (order) removeOrder(orderId)
+      return 'unavailable'
     }
 
     try {
       const current = await apiRequest('/orders/current', {
         orderTrackingToken: order.orderTrackingToken
       })
-      order.orderStatus = current.status
-      order.fulfillmentType = current.fulfillmentType
-      order.totalAmount = current.totalAmount
-      order.currency = current.currency
-      order.createdAt = current.createdAt
-      order.scheduledDate = current.scheduledDate
-      order.scheduledStartsAt = current.scheduledStartsAt
-      order.scheduledEndsAt = current.scheduledEndsAt
-      delete orderErrors[orderId]
+      if (String(current.orderId) !== String(orderId)) {
+        removeOrder(orderId)
+        return 'unavailable'
+      }
       if (current.status === 'COMPLETED') {
         removeOrder(orderId)
-        return null
+        return 'completed'
       }
+      Object.assign(order, {
+        orderStatus: current.status,
+        fulfillmentType: current.fulfillmentType,
+        totalAmount: current.totalAmount,
+        currency: current.currency,
+        createdAt: current.createdAt,
+        scheduledDate: current.scheduledDate,
+        scheduledStartsAt: current.scheduledStartsAt,
+        scheduledEndsAt: current.scheduledEndsAt
+      })
+      delete orderErrors[orderId]
       persistOrders()
-      return order
+      return 'ok'
     } catch (error) {
-      if (error.status === 404) removeOrder(orderId)
-      else orderErrors[orderId] = error.message || 'No se pudo consultar el pedido.'
-      return null
+      if (error.status === 401 || error.status === 404) {
+        removeOrder(orderId)
+        return 'unavailable'
+      }
+      orderErrors[orderId] = error.message || 'No se pudo consultar el pedido.'
+      return 'error'
     }
-  }
-
-  const refreshAll = async () => {
-    loading.value = true
-    await Promise.all(orders.value.map((order) => refreshOrder(order.orderId)))
-    loading.value = false
   }
 
   const submitTransferProof = async (orderId, file) => {
@@ -163,11 +165,9 @@ export const useStoreOrders = ({
 
   return {
     addOrder,
-    loading,
     orderErrors,
     orders,
-    refreshAll,
-    refreshOrder,
+    syncOrder,
     removeOrder,
     restoreOrders,
     submitTransferProof,

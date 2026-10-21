@@ -80,9 +80,11 @@ export default async function handler(request, response) {
     const body = ['GET', 'HEAD'].includes(request.method)
       ? undefined
       : await readRequestBody(request)
+    const upstreamAbort = new AbortController()
     const upstream = await fetch(upstreamUrl, {
       method: request.method,
       headers,
+      signal: upstreamAbort.signal,
       ...(body === undefined ? {} : { body })
     })
 
@@ -93,6 +95,23 @@ export default async function handler(request, response) {
     }
 
     if (upstream.status === 204 || upstream.status === 304) return response.end()
+
+    // Order tracking uses Server-Sent Events, which must be forwarded without buffering.
+    if (upstream.body && upstream.headers.get('content-type')?.includes('text/event-stream')) {
+      const abortUpstream = () => upstreamAbort.abort()
+      response.on?.('close', abortUpstream)
+      response.setHeader('Cache-Control', 'no-cache, no-transform')
+      response.flushHeaders?.()
+      try {
+        for await (const chunk of upstream.body) {
+          response.write(chunk)
+          response.flush?.()
+        }
+      } catch {
+        // The client or upstream closed the stream; the browser reconnects on its own.
+      }
+      return response.end()
+    }
     return response.send(await upstream.text())
   } catch {
     return response.status(502).json({ error: 'Could not reach store API' })

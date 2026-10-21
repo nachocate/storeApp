@@ -27,7 +27,7 @@ watch(() => props.product.image, () => {
 })
 
 const unitPriceLabel = computed(() =>
-  `$${props.product.pricePerType.toFixed(2)} / ${props.product.productType === 'weight' ? 'kg' : 'u'}`)
+  `$${props.product.pricePerType.toFixed(2)} / ${props.product.unitSymbol ?? 'u'}`)
 
 const addAriaLabel = computed(() => props.busy
   ? 'Procesando producto'

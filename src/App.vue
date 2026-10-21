@@ -2,7 +2,6 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import ProductCard from './components/ProductCard.vue'
 import CheckoutPage from './components/CheckoutPage.vue'
-import MyOrdersPage from './components/MyOrdersPage.vue'
 import WelcomePage from './components/WelcomePage.vue'
 import storeInfo from './data/store-info.json'
 import { requestStoreApi } from './api/store.js'
@@ -10,6 +9,7 @@ import { IS_HOME, REQUESTED_ORDER_ID, STORE_SLUG } from './config/store.js'
 import { useVisitorCart } from './composables/useVisitorCart.js'
 import { useStoreOrders } from './composables/useStoreOrders.js'
 import { resolveStoreAssetUrl } from './utils/resolveStoreAssetUrl.js'
+import { readQuantityRules } from './utils/quantityRules.js'
 import { isStoreCurrentlyOpen, normalizeWeeklyHours } from './utils/storeHours.js'
 import { blendColors, getContrastColor, getReadableColor } from './utils/contrast.js'
 const isHome = IS_HOME
@@ -279,24 +279,23 @@ const updateProductQty = (product, delta) => {
 const {
   addOrder: saveStoreOrder,
   orders,
-  loading: ordersLoading,
   orderErrors,
-  refreshAll: refreshAllOrders,
-  refreshOrder,
+  syncOrder,
   submitTransferProof,
   transferErrors,
   transferSuccess,
   uploadingProofs
 } = useStoreOrders()
-const myOrdersOpen = ref(false)
+const trackedOrderId = ref(null)
+const trackingFromUrl = ref(false)
 
 watch(loadMoreSentinel, (sentinel) => {
   if (sentinel) productsObserver?.observe(sentinel)
 }, { flush: 'post' })
 
 const normalizeApiProduct = (product) => {
-  const productType = product.unit?.symbol === 'kg' ? 'weight' : 'unit'
-  const step = productType === 'weight' ? 0.25 : 1
+  const { decimalScale, step, minQuantity, unitSymbol } = readQuantityRules(product)
+  const productType = decimalScale > 0 ? 'weight' : 'unit'
   const maxQuantityPerOrder = product.maxQuantityPerOrder == null
     ? null
     : Number(product.maxQuantityPerOrder)
@@ -321,8 +320,11 @@ const normalizeApiProduct = (product) => {
     isSoldOut: !product.available,
     isVisible: true,
     step,
+    minQuantity,
+    decimalScale,
+    unitSymbol,
     quantity: product.available
-      ? Math.min(step, maxQuantityPerOrder ?? step)
+      ? Math.min(minQuantity, maxQuantityPerOrder ?? minQuantity)
       : 0
   }
 }
@@ -534,7 +536,7 @@ onMounted(async () => {
   if (!storeNotFound.value && !storeError.value) {
     await initializeCart()
     await loadDeliveryAvailability()
-    if (REQUESTED_ORDER_ID) myOrdersOpen.value = true
+    if (REQUESTED_ORDER_ID) openOrderTracking(REQUESTED_ORDER_ID)
   }
 })
 
@@ -589,12 +591,18 @@ const returnToStore = () => {
   }
 
   checkoutOpen.value = false
-  myOrdersOpen.value = false
+  trackedOrderId.value = null
+  trackingFromUrl.value = false
 }
 
-const openMyOrders = () => {
+const openOrderTracking = (requestedOrderId = '') => {
+  const target = requestedOrderId
+    ? orders.value.find((order) => String(order.orderId) === requestedOrderId)
+    : orders.value[0]
   cartOpen.value = false
-  myOrdersOpen.value = true
+  trackedOrderId.value = target?.orderId ?? null
+  trackingFromUrl.value = Boolean(requestedOrderId)
+  checkoutOpen.value = true
 }
 
 </script>
@@ -639,23 +647,17 @@ const openMyOrders = () => {
         :currency="cartTotals.currency"
         :store-name="storeName"
         :save-order="saveStoreOrder"
-        @back="returnToStore"
-        @complete="clearCompletedCart"
-      />
-      <MyOrdersPage
-        v-else-if="myOrdersOpen"
         :orders="orders"
-        :requested-order-id="REQUESTED_ORDER_ID"
-        :loading="ordersLoading"
+        :tracked-order-id="trackedOrderId"
+        :requested-order-id="trackingFromUrl ? REQUESTED_ORDER_ID : ''"
+        :sync-order="syncOrder"
         :order-errors="orderErrors"
         :transfer-errors="transferErrors"
         :transfer-success="transferSuccess"
         :uploading-proofs="uploadingProofs"
-        :refresh-all="refreshAllOrders"
-        :refresh-order="refreshOrder"
         :submit-transfer-proof="submitTransferProof"
-        :store-name="storeName"
         @back="returnToStore"
+        @complete="clearCompletedCart"
       />
       <template v-else>
       <section id="banner" :class="{ 'store-loading-state': settingsLoading }">
@@ -726,7 +728,7 @@ const openMyOrders = () => {
             class="closed-orders-button"
             icon="pi pi-receipt"
             :label="`Mis pedidos (${ordersCount})`"
-            @click="openMyOrders"
+            @click="openOrderTracking()"
           />
         </template>
       </section>
@@ -821,9 +823,9 @@ const openMyOrders = () => {
           :store-closed="storeIsOpen === false"
           :busy="cartLoading"
           :in-cart="Boolean(cart.find((item) => item.id === product.id))"
-          :decrease-removes-item="getCartQuantity(product.id) > 0 && getCartQuantity(product.id) <= product.step"
+          :decrease-removes-item="getCartQuantity(product.id) > 0 && getCartQuantity(product.id) <= product.minQuantity"
           :unavailable="isUnavailable(product)"
-          :decrease-disabled="getProductQuantity(product) <= product.step && !getCartQuantity(product.id)"
+          :decrease-disabled="getProductQuantity(product) <= product.minQuantity && !getCartQuantity(product.id)"
           :increase-disabled="isProductLimitReached(product) || cartLoading"
           @change-quantity="updateProductQty(product, $event)"
           @add-to-cart="addToCart(product)"
@@ -876,7 +878,7 @@ const openMyOrders = () => {
         badge-severity="primary"
         aria-label="Abrir mis pedidos"
         title="Mis pedidos"
-        @click="openMyOrders"
+        @click="openOrderTracking()"
       />
 
       <Drawer
@@ -925,14 +927,14 @@ const openMyOrders = () => {
               <div class="cart-item-controls">
                 <Button
                   type="button"
-                  :icon="item.quantity <= item.step ? 'pi pi-trash' : 'pi pi-minus'"
+                  :icon="item.quantity <= item.minQuantity ? 'pi pi-trash' : 'pi pi-minus'"
                   text
                   rounded
                   :disabled="cartLoading"
-                  :aria-label="item.quantity <= item.step ? `Eliminar ${item.name} del carrito` : `Disminuir cantidad de ${item.name}`"
-                  @click="item.quantity <= item.step ? promptRemoveFromCart(item.id) : updateCart(item.id, -1)"
+                  :aria-label="item.quantity <= item.minQuantity ? `Eliminar ${item.name} del carrito` : `Disminuir cantidad de ${item.name}`"
+                  @click="item.quantity <= item.minQuantity ? promptRemoveFromCart(item.id) : updateCart(item.id, -1)"
                 />
-                <span>{{ formatCartQuantity(item.quantity, item.productType) }}</span>
+                <span>{{ formatCartQuantity(item.quantity, item) }}</span>
                 <Button type="button" icon="pi pi-plus" text rounded :disabled="cartLoading || item.quantity + item.step > getProductLimit(item)" :aria-label="`Aumentar cantidad de ${item.name}`" @click="updateCart(item.id, 1)" />
               </div>
             </div>

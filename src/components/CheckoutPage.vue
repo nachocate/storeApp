@@ -1,23 +1,74 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { requestStoreApi } from '../api/store.js'
+import { useOrderTracking } from '../composables/useOrderTracking.js'
+import { canUploadTransferProof } from '../utils/canUploadTransferProof.js'
 import { formatCurrency } from '../utils/formatCurrency.js'
 import { formatDeliveryAddress } from '../utils/formatDeliveryAddress.js'
+import { formatOrderStatus } from '../utils/formatOrderStatus.js'
+import { formatQuantity as formatQuantityWithUnit } from '../utils/quantityRules.js'
+import {
+  buildInvoiceData,
+  INVOICE_DOCUMENT_TYPES,
+  isValidEmail,
+  resolveInvoiceMode,
+  validateInvoiceData
+} from '../utils/invoiceData.js'
 import { normalizeFulfillmentWindowId } from '../utils/normalizeFulfillmentWindowId.js'
 
 const props = defineProps({
   items: { type: Array, required: true },
-  cartToken: { type: String, required: true },
+  cartToken: { type: String, default: '' },
   revision: { type: [String, Number], default: null },
   subtotal: { type: Number, required: true },
   discountAmount: { type: Number, required: true },
   totalAmount: { type: Number, required: true },
   currency: { type: String, required: true },
   storeName: { type: String, required: true },
-  saveOrder: { type: Function, required: true }
+  saveOrder: { type: Function, required: true },
+  orders: { type: Array, default: () => [] },
+  trackedOrderId: { type: [String, Number], default: null },
+  requestedOrderId: { type: String, default: '' },
+  syncOrder: { type: Function, required: true },
+  orderErrors: { type: Object, required: true },
+  transferErrors: { type: Object, required: true },
+  transferSuccess: { type: Object, required: true },
+  uploadingProofs: { type: Object, required: true },
+  submitTransferProof: { type: Function, required: true }
 })
 
 const emit = defineEmits(['back', 'complete'])
+
+const trackingOnly = props.trackedOrderId !== null || Boolean(props.requestedOrderId)
+const activeOrderId = ref(props.trackedOrderId)
+const trackedOrder = computed(() => props.orders.find((order) => order.orderId === activeOrderId.value))
+const { connection, finished: trackingFinished, loading: trackingLoading, unavailable: trackingUnavailable } = useOrderTracking({
+  orderId: () => activeOrderId.value,
+  orders: computed(() => props.orders),
+  syncOrder: props.syncOrder
+})
+const connectionLabel = computed(() => ({
+  connected: 'Actualización en tiempo real conectada',
+  connecting: 'Conectando…',
+  reconnecting: 'Reconectando…'
+}[connection.value] ?? ''))
+const formatDate = (value) => value
+  ? new Date(`${value.slice(0, 10)}T12:00:00`).toLocaleDateString('es-AR', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric'
+  })
+  : 'Fecha no disponible'
+const handleProof = async (order, event) => {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  try {
+    await props.submitTransferProof(order.orderId, file)
+  } catch {
+    // The composable exposes the actionable error beside this order.
+  }
+}
 
 const form = reactive({
   phone: '',
@@ -29,6 +80,34 @@ const form = reactive({
   locality: '',
   notes: '',
   paymentProvider: ''
+})
+const invoiceMode = ref('DISABLED')
+const wantsInvoice = ref(false)
+const invoice = reactive({ legalName: '', documentType: 'DNI', documentNumber: '' })
+const touched = reactive({ email: false, legalName: false, documentNumber: false })
+const showInvoiceBlock = computed(() =>
+  invoiceMode.value === 'REQUIRED' || (invoiceMode.value === 'OPTIONAL' && wantsInvoice.value))
+const invoiceErrors = computed(() => validateInvoiceData(invoice).errors)
+const invoiceInvalid = computed(() => showInvoiceBlock.value && Object.keys(invoiceErrors.value).length > 0)
+const emailError = computed(() => isValidEmail(form.email) ? '' : 'Ingresá un email válido.')
+
+const loadInvoiceMode = async () => {
+  try {
+    invoiceMode.value = resolveInvoiceMode(await requestStoreApi('/settings'))
+  } catch {
+    // Keep the last known mode; the API validates the current rule on checkout.
+  }
+  if (invoiceMode.value === 'DISABLED') clearInvoice()
+}
+
+function clearInvoice() {
+  wantsInvoice.value = false
+  Object.assign(invoice, { legalName: '', documentType: 'DNI', documentNumber: '' })
+  Object.assign(touched, { legalName: false, documentNumber: false })
+}
+
+watch(wantsInvoice, (wanted) => {
+  if (!wanted) clearInvoice()
 })
 const sending = ref(false)
 const completed = ref(false)
@@ -67,6 +146,8 @@ const canSubmit = computed(() =>
   !optionsLoading.value &&
   !optionsError.value &&
   checkoutOptions.value?.checkoutEnabled &&
+  !emailError.value &&
+  !invoiceInvalid.value &&
   enabledFulfillments.value.length > 0 &&
   Boolean(form.paymentProvider) &&
   Boolean(form.fulfillmentDate) &&
@@ -76,15 +157,7 @@ const canSubmit = computed(() =>
   !quoteLoading.value
 )
 
-const formatQuantity = (item) => {
-  if (item.productType === 'weight') {
-    return item.quantity >= 1
-      ? `${Number(item.quantity.toFixed(2))} kg`
-      : `${Math.round(item.quantity * 1000)} g`
-  }
-
-  return `${item.quantity.toFixed(0)} u`
-}
+const formatQuantity = (item) => formatQuantityWithUnit(item.quantity, item)
 
 const formatMoney = (amount, currency = quote.value?.currency || props.currency || 'ARS') =>
   formatCurrency(Number(amount ?? 0), currency)
@@ -185,8 +258,9 @@ watch(() => form.fulfillmentDate, (date) => {
 const retrySaveOrder = () => {
   if (!savedOrder.value) return
   try {
-    props.saveOrder(savedOrder.value)
+    const record = props.saveOrder(savedOrder.value)
     orderSaveWarning.value = ''
+    activeOrderId.value = record?.orderId ?? savedOrder.value.orderId
     if (!cartCleared.value) {
       cartCleared.value = true
       emit('complete', { cartToken: props.cartToken, result: checkoutResult.value })
@@ -202,11 +276,12 @@ const confirmOrder = async () => {
   sending.value = true
   checkoutError.value = ''
   try {
+    const invoiceData = buildInvoiceData(invoiceMode.value, wantsInvoice.value, invoice)
     const result = await requestStoreApi('/carts/current/checkout', {
       method: 'POST',
       cartToken: props.cartToken,
       body: {
-        customerEmail: form.email || undefined,
+        customerEmail: form.email,
         customerPhone: form.phone,
         fulfillmentType: form.fulfillmentType,
         addressSnapshot: form.fulfillmentType === 'DELIVERY'
@@ -215,7 +290,8 @@ const confirmOrder = async () => {
         fulfillmentDate: form.fulfillmentDate,
         fulfillmentWindowId: normalizeFulfillmentWindowId(form.fulfillmentWindowId),
         paymentProvider: form.paymentProvider,
-        revision: quote.value?.revision ?? props.revision
+        revision: quote.value?.revision ?? props.revision,
+        ...(invoiceData ? { invoiceData } : {})
       }
     })
     const order = result?.order ?? result?.data?.order ?? result
@@ -223,15 +299,28 @@ const confirmOrder = async () => {
     savedOrder.value = order
     orderReference.value = order?.orderId ?? 'Pedido confirmado'
     completed.value = true
+    clearInvoice()
     retrySaveOrder()
   } catch (error) {
-    checkoutError.value = error.message || 'No se pudo confirmar el pedido.'
+    if (error.code === 'customer_invoice_data_required' || error.code === 'customer_invoice_data_disabled') {
+      await loadInvoiceMode()
+      checkoutError.value = error.code === 'customer_invoice_data_required'
+        ? 'La tienda necesita tus datos de facturación para confirmar el pedido.'
+        : 'La tienda ya no solicita datos de facturación. Volvé a confirmar el pedido.'
+      Object.assign(touched, { legalName: true, documentNumber: true })
+    } else {
+      checkoutError.value = error.message || 'No se pudo confirmar el pedido.'
+    }
   } finally {
     sending.value = false
   }
 }
 
-onMounted(loadCheckoutOptions)
+onMounted(() => {
+  if (trackingOnly) return
+  void loadCheckoutOptions()
+  void loadInvoiceMode()
+})
 </script>
 
 <template>
@@ -241,14 +330,20 @@ onMounted(loadCheckoutOptions)
       <p class="checkout-store">{{ storeName }}</p>
     </header>
 
-    <section v-if="completed" class="order-complete" aria-live="polite">
-      <div class="success-mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" /></svg>
-      </div>
-      <p class="checkout-eyebrow">Pedido confirmado</p>
-      <h1>Gracias por tu compra</h1>
-      <p>Registramos tu pedido número:</p>
-      <strong class="order-reference">{{ orderReference }}</strong>
+    <section v-if="completed || trackingOnly" class="order-complete" aria-live="polite">
+      <template v-if="completed">
+        <div class="success-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" /></svg>
+        </div>
+        <p class="checkout-eyebrow">Pedido confirmado</p>
+        <h1>Gracias por tu compra</h1>
+        <p>Registramos tu pedido número:</p>
+        <strong class="order-reference">{{ orderReference }}</strong>
+      </template>
+      <template v-else>
+        <p class="checkout-eyebrow">Seguimiento</p>
+        <h1>Estado de tu pedido</h1>
+      </template>
       <p v-if="savedOrder?.paymentProvider === 'TRANSFER' && savedOrder?.transferAlias">
         Transferí a <strong>{{ savedOrder.transferAlias }}</strong>
         <template v-if="savedOrder.transferAccountHolder">, a nombre de <strong>{{ savedOrder.transferAccountHolder }}</strong></template>.
@@ -257,7 +352,86 @@ onMounted(loadCheckoutOptions)
         {{ orderSaveWarning }}
         <Button label="Reintentar guardado" text @click="retrySaveOrder" />
       </Message>
-      <Button label="Volver a la tienda" icon="pi pi-arrow-left" @click="emit('back')" />
+
+      <nav v-if="orders.length > 1" class="tracked-orders" aria-label="Pedidos en seguimiento">
+        <Button
+          v-for="order in orders"
+          :key="order.orderId"
+          :label="`Pedido #${order.orderId}`"
+          size="small"
+          :severity="order.orderId === activeOrderId ? 'primary' : 'secondary'"
+          :aria-pressed="order.orderId === activeOrderId"
+          @click="activeOrderId = order.orderId"
+        />
+      </nav>
+
+      <Message v-if="trackingFinished" severity="success" :closable="false" class="tracking-message">
+        Tu pedido fue completado y ya no se muestra en el seguimiento.
+      </Message>
+
+      <Message v-else-if="trackingUnavailable || (!trackedOrder && !orderSaveWarning)" severity="info" :closable="false" class="tracking-message">
+        El seguimiento sólo puede abrirse desde el dispositivo y navegador que creó el pedido. Si necesitás ayuda, contactá al comercio.
+      </Message>
+
+      <article v-else-if="trackedOrder" class="tracked-order">
+        <div class="tracked-order-heading">
+          <div>
+            <p class="tracked-order-number">Pedido #{{ trackedOrder.orderId }}</p>
+            <p class="tracked-order-date">{{ formatDate(trackedOrder.createdAt) }}</p>
+          </div>
+          <Tag :value="formatOrderStatus(trackedOrder.orderStatus)" />
+        </div>
+        <ProgressBar v-if="trackingLoading" mode="indeterminate" class="tracking-progress" />
+        <p v-if="connectionLabel" class="tracking-connection" role="status">{{ connectionLabel }}</p>
+
+        <dl class="tracked-order-details">
+          <div>
+            <dt>Modalidad</dt>
+            <dd>{{ trackedOrder.fulfillmentType === 'PICKUP' ? 'Retiro en tienda' : 'Envío a domicilio' }}</dd>
+          </div>
+          <div>
+            <dt>Entrega</dt>
+            <dd>{{ formatDate(trackedOrder.scheduledDate) }}<template v-if="trackedOrder.scheduledStartsAt">, {{ trackedOrder.scheduledStartsAt }} a {{ trackedOrder.scheduledEndsAt }}</template></dd>
+          </div>
+          <div>
+            <dt>Total</dt>
+            <dd>{{ formatMoney(trackedOrder.totalAmount, trackedOrder.currency) }}</dd>
+          </div>
+          <div>
+            <dt>Pago</dt>
+            <dd>{{ trackedOrder.paymentProvider === 'TRANSFER' ? 'Transferencia' : 'Efectivo' }}</dd>
+          </div>
+        </dl>
+
+        <Message v-if="orderErrors[trackedOrder.orderId]" severity="error" :closable="false">
+          {{ orderErrors[trackedOrder.orderId] }}
+        </Message>
+
+        <div v-if="canUploadTransferProof(trackedOrder)" class="proof-region">
+          <p v-if="trackedOrder.transferAlias">
+            Transferí a <strong>{{ trackedOrder.transferAlias }}</strong>
+            <template v-if="trackedOrder.transferAccountHolder">, titular <strong>{{ trackedOrder.transferAccountHolder }}</strong></template>.
+          </p>
+          <label class="proof-input-label">
+            <i class="pi pi-upload" aria-hidden="true"></i>
+            <span>{{ uploadingProofs[trackedOrder.orderId] ? 'Enviando comprobante...' : 'Adjuntar comprobante' }}</span>
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              :disabled="uploadingProofs[trackedOrder.orderId]"
+              :aria-label="`Adjuntar comprobante para el pedido ${trackedOrder.orderId}`"
+              @change="handleProof(trackedOrder, $event)"
+            >
+          </label>
+          <Message v-if="transferSuccess[trackedOrder.orderId]" severity="success" :closable="false">
+            {{ transferSuccess[trackedOrder.orderId] }}
+          </Message>
+          <Message v-if="transferErrors[trackedOrder.orderId]" severity="error" :closable="false">
+            {{ transferErrors[trackedOrder.orderId] }}
+          </Message>
+          <small>JPEG, PNG o WebP, hasta 5 MiB.</small>
+        </div>
+      </article>
     </section>
 
     <template v-else>
@@ -285,10 +459,74 @@ onMounted(loadCheckoutOptions)
                 <InputText v-model.trim="form.phone" name="phone" type="tel" autocomplete="tel" required />
               </label>
               <label class="field">
-                <span>Email <small>Opcional</small></span>
-                <InputText v-model.trim="form.email" name="email" type="email" autocomplete="email" />
+                <span>Email</span>
+                <InputText
+                  v-model.trim="form.email"
+                  name="email"
+                  type="email"
+                  autocomplete="email"
+                  required
+                  :invalid="touched.email && Boolean(emailError)"
+                  :aria-invalid="touched.email && Boolean(emailError)"
+                  aria-describedby="email-error"
+                  @blur="touched.email = true"
+                />
+                <small v-if="touched.email && emailError" id="email-error" class="field-error">{{ emailError }}</small>
               </label>
             </div>
+          </section>
+
+          <section v-if="invoiceMode !== 'DISABLED'" class="checkout-section">
+            <h2>{{ invoiceMode === 'REQUIRED' ? 'Datos necesarios para facturación' : '¿Necesitás factura?' }}</h2>
+            <p class="invoice-help">
+              {{ invoiceMode === 'REQUIRED'
+                ? 'La tienda necesita estos datos para procesar el pedido.'
+                : 'El comercio usará estos datos para emitirla.' }}
+            </p>
+            <label v-if="invoiceMode === 'OPTIONAL'" class="invoice-toggle">
+              <input v-model="wantsInvoice" type="checkbox" name="wantsInvoice">
+              <span>Necesito factura</span>
+            </label>
+            <template v-if="showInvoiceBlock">
+              <label class="field">
+                <span>Nombre completo o razón social</span>
+                <InputText
+                  v-model="invoice.legalName"
+                  name="legalName"
+                  maxlength="160"
+                  autocomplete="name"
+                  required
+                  :invalid="touched.legalName && Boolean(invoiceErrors.legalName)"
+                  :aria-invalid="touched.legalName && Boolean(invoiceErrors.legalName)"
+                  aria-describedby="legal-name-error"
+                  @blur="touched.legalName = true"
+                />
+                <small v-if="touched.legalName && invoiceErrors.legalName" id="legal-name-error" class="field-error">{{ invoiceErrors.legalName }}</small>
+              </label>
+              <div class="field-row">
+                <label class="field">
+                  <span>Tipo de documento</span>
+                  <select v-model="invoice.documentType" name="documentType" required>
+                    <option v-for="type in INVOICE_DOCUMENT_TYPES" :key="type" :value="type">{{ type }}</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Número de documento</span>
+                  <InputText
+                    v-model="invoice.documentNumber"
+                    name="documentNumber"
+                    inputmode="numeric"
+                    autocomplete="off"
+                    required
+                    :invalid="touched.documentNumber && Boolean(invoiceErrors.documentNumber)"
+                    :aria-invalid="touched.documentNumber && Boolean(invoiceErrors.documentNumber)"
+                    aria-describedby="document-number-error"
+                    @blur="touched.documentNumber = true"
+                  />
+                  <small v-if="touched.documentNumber && invoiceErrors.documentNumber" id="document-number-error" class="field-error">{{ invoiceErrors.documentNumber }}</small>
+                </label>
+              </div>
+            </template>
           </section>
 
           <section class="checkout-section">
@@ -798,6 +1036,147 @@ onMounted(loadCheckoutOptions)
   letter-spacing: 0.08em;
 }
 
+.field-error {
+  color: #b42318;
+  font-size: 0.82rem;
+}
+
+.invoice-help {
+  margin: 0 0 0.75rem;
+  color: #647167;
+  font-size: 0.9rem;
+}
+
+.invoice-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 2.75rem;
+  margin-bottom: 0.5rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.invoice-toggle input {
+  width: 1.2rem;
+  height: 1.2rem;
+  accent-color: var(--primary-color);
+}
+
+.tracked-orders {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0 1rem;
+}
+
+.tracking-message {
+  margin: 1rem 0;
+}
+
+.tracking-message.p-message-success {
+  --p-message-success-background: var(--secondary-color);
+  --p-message-success-border-color: var(--secondary-color);
+  --p-message-success-color: var(--secondary-contrast-color);
+  --p-message-text-color: var(--secondary-contrast-color);
+}
+
+.tracked-order {
+  display: grid;
+  width: 100%;
+  gap: 1rem;
+  margin: 1rem 0 1.5rem;
+  padding: 1.25rem 0;
+  border-top: 1px solid rgba(24, 37, 28, 0.14);
+  border-bottom: 1px solid rgba(24, 37, 28, 0.14);
+  text-align: left;
+}
+
+.tracked-order-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.tracked-order-number,
+.tracked-order-date,
+.tracking-connection {
+  margin: 0;
+}
+
+.tracked-order-number {
+  font-weight: 800;
+}
+
+.tracked-order-date,
+.tracking-connection,
+.tracked-order-details dt,
+.proof-region small {
+  color: #647167;
+  font-size: 0.82rem;
+}
+
+.tracking-progress {
+  height: 0.35rem;
+}
+
+.tracked-order-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem 1.5rem;
+  margin: 0;
+}
+
+.tracked-order-details dt,
+.tracked-order-details dd {
+  margin: 0;
+}
+
+.tracked-order-details dd {
+  margin-top: 0.2rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.proof-region {
+  display: grid;
+  justify-items: start;
+  gap: 0.65rem;
+}
+
+.proof-region p {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.proof-input-label {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.7rem;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--primary-color);
+  border-radius: 6px;
+  color: var(--primary-color);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.proof-input-label:focus-within {
+  outline: 3px solid var(--p-focus-ring-color);
+}
+
+.proof-input-label input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
 @media (max-width: 800px) {
   .checkout-layout {
     grid-template-columns: 1fr;
@@ -828,6 +1207,7 @@ onMounted(loadCheckoutOptions)
   }
 
   .field-row,
+  .tracked-order-details,
   .choice-grid {
     grid-template-columns: 1fr;
   }

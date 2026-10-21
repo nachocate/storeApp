@@ -1,5 +1,6 @@
 const ORDER_STATUS_LABELS = {
   PENDING: 'Pendiente',
+  PENDING_AVAILABILITY: 'Esperando confirmación de disponibilidad',
   PENDING_PAYMENT: 'Pendiente de pago',
   AWAITING_PAYMENT: 'Pendiente de pago',
   AWAITING_PAYMENT_PROOF: 'A la espera del comprobante',

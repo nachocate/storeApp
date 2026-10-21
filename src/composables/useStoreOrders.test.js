@@ -49,17 +49,40 @@ describe('useStoreOrders', () => {
     expect(mountedOrders.storeOrders.orders.value).toEqual([])
   })
 
-  it('refreshes status with the tracking header and removes completed orders', async () => {
-    const apiRequest = vi.fn().mockResolvedValue({ status: 'COMPLETED' })
+  it('syncs the canonical status with the tracking header and drops completed orders', async () => {
+    const apiRequest = vi.fn().mockResolvedValue({ orderId: 42, status: 'COMPLETED' })
     mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', apiRequest, now: () => 1000 })
     mountedOrders.storeOrders.addOrder({ orderId: 42, orderTrackingToken: 'private-token' })
 
-    await mountedOrders.storeOrders.refreshOrder(42)
+    await expect(mountedOrders.storeOrders.syncOrder(42)).resolves.toBe('completed')
 
     expect(apiRequest).toHaveBeenCalledWith('/orders/current', {
       orderTrackingToken: 'private-token'
     })
     expect(mountedOrders.storeOrders.orders.value).toEqual([])
+  })
+
+  it('drops the order when the API rejects the token or returns another order', async () => {
+    const apiRequest = vi.fn()
+      .mockResolvedValueOnce({ orderId: 99, status: 'PREPARING' })
+      .mockRejectedValueOnce(Object.assign(new Error('gone'), { status: 401 }))
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', apiRequest, now: () => 1000 })
+    mountedOrders.storeOrders.addOrder({ orderId: 42, orderTrackingToken: 'private-token' })
+
+    await expect(mountedOrders.storeOrders.syncOrder(42)).resolves.toBe('unavailable')
+    mountedOrders.storeOrders.addOrder({ orderId: 42, orderTrackingToken: 'private-token' })
+    await expect(mountedOrders.storeOrders.syncOrder(42)).resolves.toBe('unavailable')
+    expect(mountedOrders.storeOrders.orders.value).toEqual([])
+  })
+
+  it('keeps the order and exposes an error on transient failures', async () => {
+    const apiRequest = vi.fn().mockRejectedValue(Object.assign(new Error('boom'), { status: 500 }))
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', apiRequest, now: () => 1000 })
+    mountedOrders.storeOrders.addOrder({ orderId: 42, orderTrackingToken: 'private-token' })
+
+    await expect(mountedOrders.storeOrders.syncOrder(42)).resolves.toBe('error')
+    expect(mountedOrders.storeOrders.orderErrors[42]).toBe('boom')
+    expect(mountedOrders.storeOrders.orders.value).toHaveLength(1)
   })
 
   it('purges expired records and records with completed status during restore', () => {
