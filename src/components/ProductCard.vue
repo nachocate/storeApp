@@ -55,7 +55,7 @@ const addAriaLabel = computed(() => props.busy
       <Tag :value="product.category" severity="primary" rounded class="category-badge" />
       <small class="product-price-base image-price">{{ unitPriceLabel }}</small>
       <Button
-        v-if="!storeClosed"
+        v-if="!storeClosed && !unavailable"
         class="add-fab"
         type="button"
         rounded
@@ -72,7 +72,8 @@ const addAriaLabel = computed(() => props.busy
       <h3>{{ product.name }}</h3>
       <p class="product-description">{{ product.description }}</p>
 
-      <div v-if="!storeClosed" class="product-quantity" aria-label="Seleccionar cantidad">
+      <p v-if="!storeClosed && unavailable" class="product-unavailable" role="status">No disponible</p>
+      <div v-else-if="!storeClosed" class="product-quantity" aria-label="Seleccionar cantidad">
         <Button
           type="button"
           :disabled="busy || (unavailable && !decreaseRemovesItem) || decreaseDisabled"
@@ -96,7 +97,7 @@ const addAriaLabel = computed(() => props.busy
           rounded
           @mouseenter="hoveredQuantityControl = 'increase'"
           @mouseleave="hoveredQuantityControl = ''"
-          @click="$emit('change-quantity', product.step)"
+          @click="inCart ? $emit('change-quantity', product.step) : $emit('add-to-cart')"
         />
       </div>
 
@@ -251,6 +252,17 @@ const addAriaLabel = computed(() => props.busy
     background: color-mix(in srgb, var(--secondary-color) 20%, #fff);
     border: 1px solid color-mix(in srgb, var(--secondary-color) 52%, #fff);
     font-weight: 700;
+  }
+
+  .product-unavailable {
+    margin: auto 0 0;
+    padding: 0.75rem 0.7rem;
+    border: 1px solid color-mix(in srgb, var(--primary-on-background-color, #18251c) 25%, #fff);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--primary-on-background-color, #18251c) 8%, #fff);
+    color: var(--primary-on-background-color, #18251c);
+    font-weight: 700;
+    text-align: center;
   }
 
   .product-quantity :deep(.p-button) {
