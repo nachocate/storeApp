@@ -6,6 +6,7 @@ import { canUploadTransferProof } from '../utils/canUploadTransferProof.js'
 import { formatCurrency } from '../utils/formatCurrency.js'
 import { formatDeliveryAddress } from '../utils/formatDeliveryAddress.js'
 import { formatOrderStatus } from '../utils/formatOrderStatus.js'
+import { describePaymentProvider } from '../utils/paymentProviders.js'
 import { formatQuantity as formatQuantityWithUnit } from '../utils/quantityRules.js'
 import {
   buildInvoiceData,
@@ -399,7 +400,7 @@ onMounted(() => {
           </div>
           <div>
             <dt>Pago</dt>
-            <dd>{{ trackedOrder.paymentProvider === 'TRANSFER' ? 'Transferencia' : 'Efectivo' }}</dd>
+            <dd>{{ describePaymentProvider(trackedOrder.paymentProvider).label }}</dd>
           </div>
         </dl>
 
@@ -604,8 +605,8 @@ onMounted(() => {
                   :value="payment.provider"
                 />
                 <span class="choice-copy">
-                  <strong>{{ payment.provider === 'CASH' ? 'Efectivo' : 'Transferencia' }}</strong>
-                  <small>{{ payment.provider === 'CASH' ? 'Al recibir o retirar' : 'Transferencia bancaria' }}</small>
+                  <strong>{{ describePaymentProvider(payment.provider).label }}</strong>
+                  <small>{{ describePaymentProvider(payment.provider).description }}</small>
                 </span>
               </label>
             </div>
