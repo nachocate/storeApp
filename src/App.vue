@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import ProductCard from './components/ProductCard.vue'
 import CheckoutPage from './components/CheckoutPage.vue'
 import WelcomePage from './components/WelcomePage.vue'
@@ -10,6 +10,7 @@ import { useVisitorCart } from './composables/useVisitorCart.js'
 import { useStoreOrders } from './composables/useStoreOrders.js'
 import { resolveStoreAssetUrl } from './utils/resolveStoreAssetUrl.js'
 import { readQuantityRules } from './utils/quantityRules.js'
+import { isValidEmail } from './utils/invoiceData.js'
 import { isStoreCurrentlyOpen, normalizeWeeklyHours } from './utils/storeHours.js'
 import { blendColors, getContrastColor, getReadableColor } from './utils/contrast.js'
 const isHome = IS_HOME
@@ -21,6 +22,7 @@ const storeNotFound = ref(false)
 const storeError = ref('')
 const bannerSlogan = ref('')
 const storePhone = ref('')
+const storeEmail = ref('')
 const storeAddress = ref('')
 const storeTimezone = ref('')
 const storeAcceptingOrders = ref(null)
@@ -68,6 +70,15 @@ const whatsappUrl = computed(() => {
   const number = storePhone.value.replace(/\D/g, '')
   return number ? `https://wa.me/${number}` : ''
 })
+const supportContact = computed(() => {
+  if (whatsappUrl.value) {
+    return { url: whatsappUrl.value, label: 'Escribinos por WhatsApp', icon: 'pi pi-whatsapp', external: true }
+  }
+  if (storeEmail.value) {
+    return { url: `mailto:${storeEmail.value}`, label: 'Escribinos por email', icon: 'pi pi-envelope', external: false }
+  }
+  return null
+})
 const mapsUrl = computed(() => storeAddress.value
   ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(storeAddress.value)}`
   : '')
@@ -94,6 +105,9 @@ const readStoreContact = (settings) => {
     settings.delivery?.enabled ?? settings.fulfillment?.deliveryEnabled
 
   storePhone.value = phone == null ? '' : String(phone).trim()
+  const emailValue = settings.email ?? settings.contactEmail ?? settings.supportEmail ??
+    contact.email ?? contact.contactEmail ?? ''
+  storeEmail.value = typeof emailValue === 'string' && isValidEmail(emailValue) ? emailValue.trim() : ''
   storeAddress.value = address.trim()
   storeTimezone.value = settings.timezone ?? settings.timeZone ?? ''
   storeAcceptingOrders.value = typeof settings.isAcceptingOrders === 'boolean'
@@ -256,6 +270,7 @@ const {
   getProductQuantity,
   hasSavedCartItems,
   initializeCart,
+  isProductBusy,
   isProductLimitReached,
   isUnavailable,
   productQty,
@@ -433,7 +448,7 @@ const categories = computed(() => {
 })
 
 const search = ref('')
-const selectedCategories = ref([])
+const selectedCategory = ref('')
 const cartOpen = ref(false)
 const checkoutOpen = ref(false)
 const pendingRemoval = ref(null)
@@ -464,33 +479,51 @@ const sortSelectPt = computed(() => {
       : undefined
   }
 })
-const categorySelectPt = computed(() => {
-  const primaryColor = branding.primaryColor || storeInfo.branding.primaryColor
+const categoryPillsEl = ref(null)
+const categoryScroll = reactive({ canScrollBack: false, canScrollForward: false })
+let categoryResizeObserver = null
 
-  return {
-    ...sortSelectPt.value,
-    pcOptionCheckbox: {
-      root: {
-        style: {
-          '--p-checkbox-background': '#fff',
-          '--p-checkbox-checked-background': '#fff',
-          '--p-checkbox-checked-hover-background': '#fff',
-          '--p-checkbox-checked-border-color': primaryColor,
-          '--p-checkbox-checked-hover-border-color': primaryColor,
-          '--p-checkbox-icon-checked-color': primaryColor,
-          '--p-checkbox-icon-checked-hover-color': primaryColor
-        }
-      }
-    }
+const updateCategoryScroll = () => {
+  const el = categoryPillsEl.value
+  if (!el) return
+  categoryScroll.canScrollBack = el.scrollLeft > 1
+  categoryScroll.canScrollForward = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+}
+
+const scrollCategories = (direction) => {
+  const el = categoryPillsEl.value
+  if (!el) return
+  el.scrollBy({ left: direction * el.clientWidth * 0.7, behavior: 'smooth' })
+}
+
+const focusSelectedCategory = () => {
+  const selected = categoryPillsEl.value?.querySelector('.category-pill.selected')
+  selected?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+}
+
+const toggleCategory = (category) => {
+  selectedCategory.value = selectedCategory.value === category ? '' : category
+  nextTick(focusSelectedCategory)
+}
+
+watch(categoryPillsEl, (el) => {
+  categoryResizeObserver?.disconnect()
+  categoryResizeObserver = null
+  if (!el) return
+  updateCategoryScroll()
+  if (typeof ResizeObserver !== 'undefined') {
+    categoryResizeObserver = new ResizeObserver(updateCategoryScroll)
+    categoryResizeObserver.observe(el)
   }
 })
+watch(categories, () => nextTick(updateCategoryScroll))
+onBeforeUnmount(() => categoryResizeObserver?.disconnect())
 
 const filteredProducts = computed(() => {
   const term = search.value.trim().toLocaleLowerCase('es')
 
   return products.filter((product) => {
-    const matchesCategory =
-      !selectedCategories.value.length || selectedCategories.value.includes(product.category)
+    const matchesCategory = !selectedCategory.value || selectedCategory.value === product.category
     const matchesSearch =
       !term ||
       product.name.toLocaleLowerCase('es').includes(term) ||
@@ -646,7 +679,9 @@ const openOrderTracking = (requestedOrderId = '') => {
         :total-amount="totalAmount"
         :currency="cartTotals.currency"
         :store-name="storeName"
+        :support-contact="supportContact"
         :save-order="saveStoreOrder"
+        :refresh-cart="refreshCurrentCart"
         :orders="orders"
         :tracked-order-id="trackedOrderId"
         :requested-order-id="trackingFromUrl ? REQUESTED_ORDER_ID : ''"
@@ -769,19 +804,47 @@ const openOrderTracking = (requestedOrderId = '') => {
             </label>
           </div>
         </div>
-        <label class="sort-select category-select">
-          <span>Categoría</span>
-          <MultiSelect
-            v-model="selectedCategories"
-            :options="categories"
-            :disabled="productsLoading || storeNotFound"
-            placeholder="Todas"
-            display="chip"
-            :show-toggle-all="false"
-            aria-label="Filtrar por categoría"
-            :pt="categorySelectPt"
-          />
-        </label>
+        <div v-if="categories.length" class="category-filter">
+          <span id="category-filter-label" class="category-filter-label">Categorías:</span>
+          <button
+            v-if="categoryScroll.canScrollBack"
+            type="button"
+            class="category-arrow category-arrow-back"
+            aria-label="Ver categorías anteriores"
+            @click="scrollCategories(-1)"
+          >
+            <i class="pi pi-chevron-left" aria-hidden="true"></i>
+          </button>
+          <div
+            ref="categoryPillsEl"
+            class="category-pills"
+            role="group"
+            aria-labelledby="category-filter-label"
+            @scroll.passive="updateCategoryScroll"
+          >
+            <button
+              v-for="category in ['', ...categories]"
+              :key="category || 'all'"
+              type="button"
+              class="category-pill"
+              :class="{ selected: selectedCategory === category }"
+              :aria-pressed="selectedCategory === category"
+              :disabled="productsLoading || storeNotFound"
+              @click="toggleCategory(category)"
+            >
+              {{ category || 'Todas' }}
+            </button>
+          </div>
+          <button
+            v-if="categoryScroll.canScrollForward"
+            type="button"
+            class="category-arrow category-arrow-forward"
+            aria-label="Ver más categorías"
+            @click="scrollCategories(1)"
+          >
+            <i class="pi pi-chevron-right" aria-hidden="true"></i>
+          </button>
+        </div>
       </section>
   
       <section id="products" class="products-grid">
@@ -821,7 +884,8 @@ const openOrderTracking = (requestedOrderId = '') => {
           :product="product"
           :quantity-label="formatQuantityLabel(product)"
           :store-closed="storeIsOpen === false"
-          :busy="cartLoading"
+          :busy="isProductBusy(product.id)"
+          :locked="cartLoading"
           :in-cart="Boolean(cart.find((item) => item.id === product.id))"
           :decrease-removes-item="getCartQuantity(product.id) > 0 && getCartQuantity(product.id) <= product.minQuantity"
           :unavailable="isUnavailable(product)"
@@ -1273,29 +1337,98 @@ const openOrderTracking = (requestedOrderId = '') => {
     color: var(--primary-text-color);
   }
 
-  .category-select {
-    width: 100%;
-    padding: 0;
+  .category-filter {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    min-width: 0;
   }
 
+  .category-filter-label {
+    flex: 0 0 auto;
+    color: var(--primary-text-color);
+    font-size: 0.9rem;
+    font-weight: 500;
+  }
 
-
-  .category-select :deep(.p-multiselect) {
-    flex: 1 1 auto;
-    min-width: 0;
-    min-height: 3.25rem;
-    border-color: color-mix(in srgb, var(--primary-color) 48%, #fff);
+  .category-arrow {
+    display: none;
+    flex: 0 0 auto;
+    width: 2.25rem;
+    height: 2.25rem;
+    place-items: center;
+    border: 1px solid color-mix(in srgb, var(--primary-color) 48%, #fff);
+    border-radius: 999px;
     background: #fff;
     color: var(--primary-text-color);
+    cursor: pointer;
   }
 
-  .category-select :deep(.p-multiselect-label) {
+  .category-arrow:hover {
+    background: color-mix(in srgb, var(--primary-color) 12%, #fff);
+  }
+
+  .category-arrow:focus-visible {
+    outline: 3px solid color-mix(in srgb, var(--primary-color) 45%, transparent);
+    outline-offset: 2px;
+  }
+
+  /* Touch devices scroll with the finger; arrows are only for mouse users. */
+  @media (hover: hover) and (pointer: fine) {
+    .category-arrow {
+      display: grid;
+    }
+  }
+
+  .category-pills {
     display: flex;
-    flex-wrap: wrap;
-    height: 100%;
-    align-items: center;
-    padding-block: 0;
-    gap: 0.35rem;
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 0.5rem;
+    overflow-x: auto;
+    padding: 0.15rem 0.1rem;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+  }
+
+  .category-pills::-webkit-scrollbar {
+    display: none;
+  }
+
+  .category-pill {
+    flex: 0 0 auto;
+    padding: 0.5rem 1rem;
+    border: 1px solid color-mix(in srgb, var(--primary-color) 48%, #fff);
+    border-radius: 999px;
+    background: #fff;
+    color: var(--primary-text-color);
+    font: inherit;
+    font-size: 0.9rem;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    scroll-snap-align: start;
+    transition: background-color 0.15s ease, color 0.15s ease;
+  }
+
+  .category-pill:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--primary-color) 12%, #fff);
+  }
+
+  .category-pill.selected {
+    border-color: var(--primary-color);
+    background: var(--primary-color);
+    color: var(--p-primary-contrast-color);
+  }
+
+  .category-pill:focus-visible {
+    outline: 3px solid color-mix(in srgb, var(--primary-color) 45%, transparent);
+    outline-offset: 2px;
+  }
+
+  .category-pill:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   .sort-select :deep(.p-select),
@@ -1637,6 +1770,11 @@ const openOrderTracking = (requestedOrderId = '') => {
     margin-bottom: 0.8rem;
     font-size: 0.95rem;
     color: #111827;
+  }
+
+  .cart-discount,
+  .cart-discount strong {
+    color: var(--status-success);
   }
 
   .cart-footer :deep(.checkout-btn) {

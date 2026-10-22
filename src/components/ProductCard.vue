@@ -6,6 +6,7 @@ const props = defineProps({
   quantityLabel: { type: String, required: true },
   storeClosed: { type: Boolean, default: false },
   busy: { type: Boolean, default: false },
+  locked: { type: Boolean, default: false },
   inCart: { type: Boolean, default: false },
   decreaseRemovesItem: { type: Boolean, default: false },
   unavailable: { type: Boolean, default: false },
@@ -54,17 +55,6 @@ const addAriaLabel = computed(() => props.busy
       </div>
       <Tag :value="product.category" severity="primary" rounded class="category-badge" />
       <small class="product-price-base image-price">{{ unitPriceLabel }}</small>
-      <Button
-        v-if="!storeClosed && !unavailable"
-        class="add-fab"
-        type="button"
-        rounded
-        :disabled="busy || inCart || unavailable"
-        :aria-label="addAriaLabel"
-        :icon="busy ? undefined : displayInCart ? 'pi pi-check' : 'pi pi-cart-plus'"
-        :loading="busy"
-        @click="$emit('add-to-cart')"
-      />
     </template>
 
     <template #content>
@@ -73,10 +63,22 @@ const addAriaLabel = computed(() => props.busy
       <p class="product-description">{{ product.description }}</p>
 
       <p v-if="!storeClosed && unavailable" class="product-unavailable" role="status">No disponible</p>
+      <Button
+        v-else-if="!storeClosed && !displayInCart"
+        class="add-to-cart"
+        type="button"
+        label="Agregar al carrito"
+        icon="pi pi-cart-plus"
+        :disabled="busy || locked || product.isSoldOut"
+        :loading="busy"
+        loading-icon="pi pi-spin pi-spinner"
+        :aria-label="addAriaLabel"
+        @click="$emit('add-to-cart')"
+      />
       <div v-else-if="!storeClosed" class="product-quantity" aria-label="Seleccionar cantidad">
         <Button
           type="button"
-          :disabled="busy || (unavailable && !decreaseRemovesItem) || decreaseDisabled"
+          :disabled="busy || locked || (unavailable && !decreaseRemovesItem) || decreaseDisabled"
           :aria-label="decreaseRemovesItem ? `Eliminar ${product.name} del carrito` : `Reducir cantidad de ${product.name}`"
           :icon="decreaseRemovesItem ? 'pi pi-trash' : 'pi pi-minus'"
           severity="secondary"
@@ -89,7 +91,7 @@ const addAriaLabel = computed(() => props.busy
         <span>{{ quantityLabel }}</span>
         <Button
           type="button"
-          :disabled="busy || unavailable || increaseDisabled"
+          :disabled="busy || locked || unavailable || increaseDisabled"
           :aria-label="`Aumentar cantidad de ${product.name}`"
           icon="pi pi-plus"
           severity="secondary"
@@ -97,7 +99,7 @@ const addAriaLabel = computed(() => props.busy
           rounded
           @mouseenter="hoveredQuantityControl = 'increase'"
           @mouseleave="hoveredQuantityControl = ''"
-          @click="inCart ? $emit('change-quantity', product.step) : $emit('add-to-cart')"
+          @click="$emit('change-quantity', product.step)"
         />
       </div>
 
@@ -241,6 +243,14 @@ const addAriaLabel = computed(() => props.busy
     scrollbar-width: thin;
   }
 
+  .product-card .add-to-cart.p-button {
+    width: 100%;
+    min-height: 3rem;
+    margin-top: auto;
+    border-radius: 12px;
+    font-weight: 700;
+  }
+
   .product-quantity {
     display: flex;
     align-items: center;
@@ -283,27 +293,6 @@ const addAriaLabel = computed(() => props.busy
     font-size: 0.72rem;
   }
 
-  .product-card .add-fab.p-button {
-    position: absolute;
-    right: 0.75rem;
-    bottom: 0.75rem;
-    z-index: 1;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 3.5rem;
-    height: 3.5rem;
-    flex: none;
-    aspect-ratio: 1 / 1;
-    padding: 0;
-    border-radius: 50%;
-    box-shadow: 0 6px 14px rgba(0, 0, 0, 0.25);
-  }
-
-  .add-fab :deep(.p-button-icon) {
-    font-size: 1.4rem;
-  }
-
   @media (max-width: 900px) {
     .product-card .product-body {
       justify-content: center;
@@ -320,15 +309,9 @@ const addAriaLabel = computed(() => props.busy
       font-size: 0.6rem;
     }
 
-    .product-card .add-fab.p-button {
-      right: 0.5rem;
-      bottom: 0.5rem;
-      width: 2.5rem;
-      height: 2.5rem;
-    }
-
-    .product-card .add-fab :deep(.p-button-icon) {
-      font-size: 1.1rem;
+    .product-card .add-to-cart.p-button {
+      min-height: 2.5rem;
+      font-size: 0.85rem;
     }
 
     .product-card .image-price {

@@ -1,6 +1,7 @@
 import { ref, reactive } from 'vue'
 import { requestStoreApi } from '../api/store.js'
 import { STORE_SLUG } from '../config/store.js'
+import { normalizeStatusTimeline } from '../utils/orderStatusStyles.js'
 
 const ORDER_TTL_MS = 30 * 24 * 60 * 60 * 1000
 const MAX_PROOF_SIZE = 5 * 1024 * 1024
@@ -114,7 +115,8 @@ export const useStoreOrders = ({
         createdAt: current.createdAt,
         scheduledDate: current.scheduledDate,
         scheduledStartsAt: current.scheduledStartsAt,
-        scheduledEndsAt: current.scheduledEndsAt
+        scheduledEndsAt: current.scheduledEndsAt,
+        statusTimeline: normalizeStatusTimeline(current.statusTimeline)
       })
       delete orderErrors[orderId]
       persistOrders()

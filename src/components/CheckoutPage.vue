@@ -6,6 +6,8 @@ import { canUploadTransferProof } from '../utils/canUploadTransferProof.js'
 import { formatCurrency } from '../utils/formatCurrency.js'
 import { formatDeliveryAddress } from '../utils/formatDeliveryAddress.js'
 import { formatOrderStatus } from '../utils/formatOrderStatus.js'
+import { getStatusTone } from '../utils/orderStatusStyles.js'
+import OrderStatusTimeline from './OrderStatusTimeline.vue'
 import { describePaymentProvider } from '../utils/paymentProviders.js'
 import { formatQuantity as formatQuantityWithUnit } from '../utils/quantityRules.js'
 import {
@@ -16,6 +18,11 @@ import {
   validateInvoiceData
 } from '../utils/invoiceData.js'
 import { normalizeFulfillmentWindowId } from '../utils/normalizeFulfillmentWindowId.js'
+import { isValidCustomerPhone } from '../utils/customerPhone.js'
+import {
+  isPendingMercadoPagoOrder,
+  resolveMercadoPagoCheckoutUrl
+} from '../utils/mercadoPagoCheckout.js'
 
 const props = defineProps({
   items: { type: Array, required: true },
@@ -26,7 +33,9 @@ const props = defineProps({
   totalAmount: { type: Number, required: true },
   currency: { type: String, required: true },
   storeName: { type: String, required: true },
+  supportContact: { type: Object, default: null },
   saveOrder: { type: Function, required: true },
+  refreshCart: { type: Function, required: true },
   orders: { type: Array, default: () => [] },
   trackedOrderId: { type: [String, Number], default: null },
   requestedOrderId: { type: String, default: '' },
@@ -43,7 +52,7 @@ const emit = defineEmits(['back', 'complete'])
 const trackingOnly = props.trackedOrderId !== null || Boolean(props.requestedOrderId)
 const activeOrderId = ref(props.trackedOrderId)
 const trackedOrder = computed(() => props.orders.find((order) => order.orderId === activeOrderId.value))
-const { connection, finished: trackingFinished, loading: trackingLoading, unavailable: trackingUnavailable } = useOrderTracking({
+const { connection, finished: trackingFinished, unavailable: trackingUnavailable } = useOrderTracking({
   orderId: () => activeOrderId.value,
   orders: computed(() => props.orders),
   syncOrder: props.syncOrder
@@ -85,11 +94,14 @@ const form = reactive({
 const invoiceMode = ref('DISABLED')
 const wantsInvoice = ref(false)
 const invoice = reactive({ legalName: '', documentType: 'DNI', documentNumber: '' })
-const touched = reactive({ email: false, legalName: false, documentNumber: false })
+const touched = reactive({ phone: false, email: false, legalName: false, documentNumber: false })
 const showInvoiceBlock = computed(() =>
   invoiceMode.value === 'REQUIRED' || (invoiceMode.value === 'OPTIONAL' && wantsInvoice.value))
 const invoiceErrors = computed(() => validateInvoiceData(invoice).errors)
 const invoiceInvalid = computed(() => showInvoiceBlock.value && Object.keys(invoiceErrors.value).length > 0)
+const phoneError = computed(() => isValidCustomerPhone(form.phone)
+  ? ''
+  : 'Ingresá un teléfono válido con código de país o área.')
 const emailError = computed(() => isValidEmail(form.email) ? '' : 'Ingresá un email válido.')
 
 const loadInvoiceMode = async () => {
@@ -112,8 +124,13 @@ watch(wantsInvoice, (wanted) => {
 })
 const sending = ref(false)
 const completed = ref(false)
+const checkoutBlocked = ref(false)
+const checkoutOutcomeUnknown = ref(false)
 const savedOrder = ref(null)
 const checkoutResult = ref(null)
+const mercadoPagoCheckoutUrl = ref('')
+const paymentLinkError = ref('')
+let paymentRedirectStarted = false
 const cartCleared = ref(false)
 const orderSaveWarning = ref('')
 const orderReference = ref('')
@@ -127,6 +144,14 @@ const fulfillmentDays = ref([])
 const quoteLoading = ref(false)
 const quoteError = ref('')
 const quote = ref(null)
+const pendingMercadoPagoPayment = computed(() => isPendingMercadoPagoOrder(
+  savedOrder.value ?? trackedOrder.value
+))
+const confirmedMercadoPagoPayment = computed(() => {
+  const order = savedOrder.value ?? trackedOrder.value
+  return order?.paymentProvider === 'MERCADO_PAGO' &&
+    order?.orderStatus === 'CONFIRMED'
+})
 
 const itemCount = computed(() => props.items.reduce((count, item) =>
   count + (item.productType === 'weight' ? 1 : item.quantity), 0
@@ -146,10 +171,14 @@ const selectedWindow = computed(() => enabledWindows.value
 const canSubmit = computed(() =>
   !optionsLoading.value &&
   !optionsError.value &&
+  !checkoutBlocked.value &&
+  !checkoutOutcomeUnknown.value &&
   checkoutOptions.value?.checkoutEnabled &&
+  !phoneError.value &&
   !emailError.value &&
   !invoiceInvalid.value &&
   enabledFulfillments.value.length > 0 &&
+  (form.fulfillmentType !== 'DELIVERY' || Boolean(form.address.trim() && form.locality.trim())) &&
   Boolean(form.paymentProvider) &&
   Boolean(form.fulfillmentDate) &&
   Boolean(form.fulfillmentWindowId) &&
@@ -185,8 +214,13 @@ const loadCheckoutOptions = async () => {
       optionsError.value = 'La tienda no esta aceptando pedidos por el momento.'
       return
     }
-    form.fulfillmentType = firstFulfillment.type
-    form.paymentProvider = firstFulfillment.paymentOptions.find((payment) => payment.enabled)?.provider ?? ''
+    const selectedFulfillment = enabledFulfillments.value.find((option) =>
+      option.type === form.fulfillmentType
+    ) ?? firstFulfillment
+    form.fulfillmentType = selectedFulfillment.type
+    form.paymentProvider = selectedFulfillment.paymentOptions
+      .find((payment) => payment.enabled && payment.provider === form.paymentProvider)?.provider ??
+      selectedFulfillment.paymentOptions.find((payment) => payment.enabled)?.provider ?? ''
   } catch (error) {
     optionsError.value = error.message || 'No se pudieron cargar las opciones de compra.'
   } finally {
@@ -256,8 +290,14 @@ watch(() => form.fulfillmentDate, (date) => {
   form.fulfillmentWindowId = firstWindow ? String(firstWindow.id) : ''
 })
 
+const redirectToMercadoPago = () => {
+  if (!mercadoPagoCheckoutUrl.value || paymentRedirectStarted) return
+  paymentRedirectStarted = true
+  window.location.assign(mercadoPagoCheckoutUrl.value)
+}
+
 const retrySaveOrder = () => {
-  if (!savedOrder.value) return
+  if (!savedOrder.value) return false
   try {
     const record = props.saveOrder(savedOrder.value)
     orderSaveWarning.value = ''
@@ -266,9 +306,96 @@ const retrySaveOrder = () => {
       cartCleared.value = true
       emit('complete', { cartToken: props.cartToken, result: checkoutResult.value })
     }
+    if (pendingMercadoPagoPayment.value && mercadoPagoCheckoutUrl.value) redirectToMercadoPago()
+    return true
   } catch (error) {
     orderSaveWarning.value = error.message || 'No se pudo guardar el seguimiento en este navegador.'
+    return false
   }
+}
+
+const refreshCheckoutContext = async ({ refreshCart = false } = {}) => {
+  const previousFulfillmentType = form.fulfillmentType
+  if (refreshCart) await props.refreshCart()
+  await loadCheckoutOptions()
+  if (form.fulfillmentType && form.fulfillmentType === previousFulfillmentType) {
+    await Promise.all([
+      loadFulfillmentWindows(form.fulfillmentType),
+      loadQuote(form.fulfillmentType)
+    ])
+  }
+}
+
+const handleCheckoutError = async (error) => {
+  if (error.code === 'customer_invoice_data_required' || error.code === 'customer_invoice_data_disabled') {
+    await loadInvoiceMode()
+    checkoutError.value = error.code === 'customer_invoice_data_required'
+      ? 'La tienda necesita tus datos de facturación para confirmar el pedido.'
+      : 'La tienda ya no solicita datos de facturación. Volvé a confirmar el pedido.'
+    Object.assign(touched, { legalName: true, documentNumber: true })
+    return
+  }
+
+  if (error.status === 401) {
+    checkoutBlocked.value = true
+    checkoutError.value = 'El carrito ya no está disponible. Volvé a la tienda para iniciar una nueva compra.'
+    return
+  }
+
+  if (error.status === 404) {
+    checkoutBlocked.value = true
+    checkoutOutcomeUnknown.value = true
+    checkoutError.value = 'No pudimos encontrar el carrito y no es seguro volver a enviar este checkout. Consultá el seguimiento o contactá a la tienda antes de intentar pagar otra vez.'
+    return
+  }
+
+  const errorCode = String(error.code ?? '').toLowerCase()
+  if (error.status === 409 || errorCode === 'cart_revision_conflict') {
+    try {
+      await refreshCheckoutContext({ refreshCart: true })
+      checkoutError.value = 'El carrito cambió. Revisá las opciones y el total actualizados antes de confirmar nuevamente.'
+    } catch {
+      checkoutError.value = 'El carrito cambió, pero no pudimos actualizarlo. Volvé a cargar la tienda antes de confirmar.'
+    }
+    return
+  }
+
+  if (error.status === 422 && errorCode.includes('fulfillment_window_full')) {
+    await loadFulfillmentWindows(form.fulfillmentType)
+    checkoutError.value = 'Ese horario ya no está disponible. Elegí otra fecha u horario.'
+    return
+  }
+
+  if (error.status === 422 && (
+    errorCode.includes('invalid_cart') ||
+    errorCode.includes('invalid_product_quantity')
+  )) {
+    try {
+      await refreshCheckoutContext({ refreshCart: true })
+      checkoutError.value = 'El carrito necesita una actualización. Revisá los productos y volvé a confirmar.'
+    } catch {
+      checkoutError.value = 'No pudimos actualizar el carrito. Volvé a cargar la tienda antes de confirmar.'
+    }
+    return
+  }
+
+  if (error.status === 422 && (
+    errorCode.includes('payment') ||
+    errorCode.includes('provider')
+  )) {
+    await loadCheckoutOptions()
+    checkoutError.value = 'Las formas de pago disponibles cambiaron. Revisá la opción seleccionada antes de confirmar.'
+    return
+  }
+
+  if (!error.status || error.status >= 500) {
+    checkoutBlocked.value = true
+    checkoutOutcomeUnknown.value = true
+    checkoutError.value = 'No pudimos confirmar si el pedido se creó. Para evitar un pedido duplicado, no vuelvas a enviar el pago; revisá el seguimiento o contactá a la tienda.'
+    return
+  }
+
+  checkoutError.value = error.message || 'No se pudo confirmar el pedido.'
 }
 
 const confirmOrder = async () => {
@@ -276,9 +403,10 @@ const confirmOrder = async () => {
 
   sending.value = true
   checkoutError.value = ''
+  let result
   try {
     const invoiceData = buildInvoiceData(invoiceMode.value, wantsInvoice.value, invoice)
-    const result = await requestStoreApi('/carts/current/checkout', {
+    result = await requestStoreApi('/carts/current/checkout', {
       method: 'POST',
       cartToken: props.cartToken,
       body: {
@@ -291,30 +419,48 @@ const confirmOrder = async () => {
         fulfillmentDate: form.fulfillmentDate,
         fulfillmentWindowId: normalizeFulfillmentWindowId(form.fulfillmentWindowId),
         paymentProvider: form.paymentProvider,
-        revision: quote.value?.revision ?? props.revision,
+        revision: checkoutOptions.value?.revision ?? quote.value?.revision ?? props.revision,
         ...(invoiceData ? { invoiceData } : {})
       }
     })
-    const order = result?.order ?? result?.data?.order ?? result
-    checkoutResult.value = result
-    savedOrder.value = order
-    orderReference.value = order?.orderId ?? 'Pedido confirmado'
-    completed.value = true
-    clearInvoice()
-    retrySaveOrder()
   } catch (error) {
-    if (error.code === 'customer_invoice_data_required' || error.code === 'customer_invoice_data_disabled') {
-      await loadInvoiceMode()
-      checkoutError.value = error.code === 'customer_invoice_data_required'
-        ? 'La tienda necesita tus datos de facturación para confirmar el pedido.'
-        : 'La tienda ya no solicita datos de facturación. Volvé a confirmar el pedido.'
-      Object.assign(touched, { legalName: true, documentNumber: true })
-    } else {
-      checkoutError.value = error.message || 'No se pudo confirmar el pedido.'
-    }
-  } finally {
     sending.value = false
+    await handleCheckoutError(error)
+    return
   }
+
+  const order = result?.order ?? result?.data?.order ?? result
+  checkoutResult.value = result
+  savedOrder.value = order
+  orderReference.value = order?.orderId ?? 'Pedido registrado'
+  completed.value = true
+  clearInvoice()
+
+  if (order?.paymentProvider === 'MERCADO_PAGO') {
+    if (!pendingMercadoPagoPayment.value) {
+      paymentLinkError.value = confirmedMercadoPagoPayment.value
+        ? ''
+        : 'El pedido se registró, pero la API no informó un estado de pago pendiente. Revisá el seguimiento antes de volver a pagar.'
+    } else {
+      try {
+        const paymentUrl = resolveMercadoPagoCheckoutUrl(
+          result?.mercadoPagoCheckoutUrl ??
+          result?.data?.mercadoPagoCheckoutUrl ??
+          order?.mercadoPagoCheckoutUrl
+        )
+        if (!paymentUrl) {
+          paymentLinkError.value = 'El pedido quedó pendiente de pago, pero la API no devolvió el enlace de Mercado Pago. No vuelvas a confirmar el checkout; consultá el seguimiento o contactá a la tienda.'
+        } else {
+          mercadoPagoCheckoutUrl.value = paymentUrl
+        }
+      } catch {
+        paymentLinkError.value = 'El pedido quedó pendiente de pago, pero no pudimos validar su enlace de Mercado Pago. No vuelvas a confirmar el checkout; contactá a la tienda.'
+      }
+    }
+  }
+
+  retrySaveOrder()
+  sending.value = false
 }
 
 onMounted(() => {
@@ -333,11 +479,23 @@ onMounted(() => {
 
     <section v-if="completed || trackingOnly" class="order-complete" aria-live="polite">
       <template v-if="completed">
-        <div class="success-mark" aria-hidden="true">
+        <div v-if="!pendingMercadoPagoPayment" class="success-mark" aria-hidden="true">
           <svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" /></svg>
         </div>
-        <p class="checkout-eyebrow">Pedido confirmado</p>
-        <h1>Gracias por tu compra</h1>
+        <p class="checkout-eyebrow">
+          {{ pendingMercadoPagoPayment
+            ? 'Pago pendiente'
+            : savedOrder?.paymentProvider === 'MERCADO_PAGO'
+              ? confirmedMercadoPagoPayment ? 'Pago confirmado' : 'Pedido registrado'
+              : 'Pedido confirmado' }}
+        </p>
+        <h1>
+          {{ pendingMercadoPagoPayment
+            ? 'Esperando la confirmación del pago'
+            : savedOrder?.paymentProvider === 'MERCADO_PAGO' && !confirmedMercadoPagoPayment
+              ? 'Estamos verificando tu pago'
+              : 'Gracias por tu compra' }}
+        </h1>
         <p>Registramos tu pedido número:</p>
         <strong class="order-reference">{{ orderReference }}</strong>
       </template>
@@ -349,6 +507,12 @@ onMounted(() => {
         Transferí a <strong>{{ savedOrder.transferAlias }}</strong>
         <template v-if="savedOrder.transferAccountHolder">, a nombre de <strong>{{ savedOrder.transferAccountHolder }}</strong></template>.
       </p>
+      <Message v-if="completed && pendingMercadoPagoPayment" severity="warn" :closable="false">
+        Estamos esperando la confirmación de Mercado Pago. El resultado visual de la plataforma de pago no confirma el pedido; el estado se actualizará desde la tienda.
+      </Message>
+      <Message v-if="paymentLinkError" severity="error" :closable="false">
+        {{ paymentLinkError }}
+      </Message>
       <Message v-if="orderSaveWarning" severity="warn" :closable="false">
         {{ orderSaveWarning }}
         <Button label="Reintentar guardado" text @click="retrySaveOrder" />
@@ -380,10 +544,31 @@ onMounted(() => {
             <p class="tracked-order-number">Pedido #{{ trackedOrder.orderId }}</p>
             <p class="tracked-order-date">{{ formatDate(trackedOrder.createdAt) }}</p>
           </div>
-          <Tag :value="formatOrderStatus(trackedOrder.orderStatus)" />
+          <span class="status-badge" :class="`tone-${getStatusTone(trackedOrder.orderStatus)}`">
+            {{ formatOrderStatus(trackedOrder.orderStatus) }}
+          </span>
         </div>
-        <ProgressBar v-if="trackingLoading" mode="indeterminate" class="tracking-progress" />
+        <OrderStatusTimeline
+          :status="trackedOrder.orderStatus"
+          :timeline="trackedOrder.statusTimeline"
+          :fulfillment-type="trackedOrder.fulfillmentType"
+          :payment-provider="trackedOrder.paymentProvider"
+        />
         <p v-if="connectionLabel" class="tracking-connection" role="status">{{ connectionLabel }}</p>
+        <Message
+          v-if="trackedOrder.paymentProvider === 'MERCADO_PAGO' && trackedOrder.orderStatus === 'PENDING_PAYMENT'"
+          severity="warn"
+          :closable="false"
+        >
+          Estamos esperando la confirmación de Mercado Pago.
+        </Message>
+        <Message
+          v-else-if="trackedOrder.paymentProvider === 'MERCADO_PAGO' && trackedOrder.orderStatus === 'CONFIRMED'"
+          severity="success"
+          :closable="false"
+        >
+          Pago confirmado. Tu pedido fue recibido.
+        </Message>
 
         <dl class="tracked-order-details">
           <div>
@@ -457,7 +642,19 @@ onMounted(() => {
             <div class="field-row">
               <label class="field">
                 <span>Teléfono</span>
-                <InputText v-model.trim="form.phone" name="phone" type="tel" autocomplete="tel" required />
+                <InputText
+                  v-model.trim="form.phone"
+                  name="phone"
+                  type="tel"
+                  autocomplete="tel"
+                  inputmode="tel"
+                  required
+                  :invalid="touched.phone && Boolean(phoneError)"
+                  :aria-invalid="touched.phone && Boolean(phoneError)"
+                  aria-describedby="phone-error"
+                  @blur="touched.phone = true"
+                />
+                <small v-if="touched.phone && phoneError" id="phone-error" class="field-error">{{ phoneError }}</small>
               </label>
               <label class="field">
                 <span>Email</span>
@@ -640,11 +837,17 @@ onMounted(() => {
             class="submit-order"
             type="submit"
             :disabled="sending || items.length === 0 || !canSubmit"
-            label="Confirmar pedido"
+            :label="form.paymentProvider === 'MERCADO_PAGO' ? 'Pagar con Mercado Pago' : 'Confirmar pedido'"
             :loading="sending"
             loading-icon="pi pi-spin pi-spinner"
-            :aria-label="sending ? 'Enviando pedido' : 'Confirmar pedido'"
+            :aria-label="sending ? 'Enviando pedido' : form.paymentProvider === 'MERCADO_PAGO' ? 'Pagar con Mercado Pago' : 'Confirmar pedido'"
           />
+          <Message v-if="sending" severity="info" :closable="false" class="checkout-error" role="status">
+            Estamos enviando tu pedido. La tienda puede demorar un poco en confirmarlo, ¡gracias por la paciencia! No cierres esta página.
+          </Message>
+          <Message v-if="checkoutOutcomeUnknown" severity="warn" :closable="false" class="checkout-error">
+            No envíes el checkout otra vez hasta verificar si el pedido fue creado.
+          </Message>
           <Message v-if="checkoutError" severity="error" :closable="false" class="checkout-error">
             {{ checkoutError }}
           </Message>
@@ -652,6 +855,22 @@ onMounted(() => {
         </Card>
       </form>
     </template>
+
+    <aside v-if="supportContact" class="support-block" aria-labelledby="support-title">
+      <div>
+        <h2 id="support-title">Tengo un problema con mi pedido</h2>
+        <p>Contactá a {{ storeName }} y te ayudamos.</p>
+      </div>
+      <a
+        class="support-link"
+        :href="supportContact.url"
+        :target="supportContact.external ? '_blank' : undefined"
+        :rel="supportContact.external ? 'noopener noreferrer' : undefined"
+      >
+        <i :class="supportContact.icon" aria-hidden="true" />
+        {{ supportContact.label }}
+      </a>
+    </aside>
   </div>
 </template>
 
@@ -1145,6 +1364,70 @@ onMounted(() => {
   display: grid;
   justify-items: start;
   gap: 0.65rem;
+}
+
+.status-badge {
+  --tone: var(--status-neutral);
+  --tone-soft: var(--status-neutral-soft);
+  display: inline-block;
+  padding: 0.3rem 0.75rem;
+  border: 1px solid var(--tone);
+  border-radius: 999px;
+  background: var(--tone-soft);
+  color: var(--tone);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.status-badge.tone-success { --tone: var(--status-success); --tone-soft: var(--status-success-soft); }
+.status-badge.tone-info { --tone: var(--status-info); --tone-soft: var(--status-info-soft); }
+.status-badge.tone-warning { --tone: var(--status-warning); --tone-soft: var(--status-warning-soft); }
+.status-badge.tone-progress { --tone: var(--status-progress); --tone-soft: var(--status-progress-soft); }
+.status-badge.tone-danger { --tone: var(--status-danger); --tone-soft: var(--status-danger-soft); }
+
+.support-block {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1.5rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid #d9e2dc;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.support-block h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.support-block p {
+  margin: 0.25rem 0 0;
+  font-size: 0.9rem;
+}
+
+.support-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  padding: 0 1rem;
+  border: 1px solid var(--primary-color);
+  border-radius: 6px;
+  color: var(--primary-text-color);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.support-link:hover {
+  background: color-mix(in srgb, var(--primary-color) 12%, #fff);
+}
+
+.support-link:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--primary-color) 45%, transparent);
+  outline-offset: 2px;
 }
 
 .proof-region p {

@@ -19,6 +19,8 @@ export const useVisitorCart = ({ products }) => {
   })
   const cartError = ref('')
   const cartLoading = ref(false)
+  const busyProductIds = ref([])
+  const isProductBusy = (productId) => busyProductIds.value.includes(productId)
   const productQty = ref({})
   const cartMutations = new Map()
   let cartDebounceTimer = null
@@ -270,14 +272,20 @@ export const useVisitorCart = ({ products }) => {
 
     cartLoading.value = true
     cartError.value = ''
+    busyProductIds.value = [...cartMutations.keys()]
     cartSyncPromise = (async () => {
       try {
         while (cartMutations.size > 0) {
           const [productId, quantity] = cartMutations.entries().next().value
           cartMutations.delete(productId)
-          await sendCartMutation(productId, quantity)
+          try {
+            await sendCartMutation(productId, quantity)
+          } finally {
+            busyProductIds.value = busyProductIds.value.filter((id) => id !== productId)
+          }
         }
       } catch (error) {
+        cartMutations.clear()
         cartError.value = error.message || 'No se pudo actualizar el carrito.'
         if (cartToken.value) {
           try {
@@ -287,6 +295,7 @@ export const useVisitorCart = ({ products }) => {
           }
         }
       } finally {
+        busyProductIds.value = []
         cartLoading.value = false
         cartSyncPromise = null
         persistCart()
@@ -396,6 +405,7 @@ export const useVisitorCart = ({ products }) => {
     getProductQuantity,
     hasSavedCartItems,
     initializeCart,
+    isProductBusy,
     isProductLimitReached,
     isUnavailable,
     productQty,

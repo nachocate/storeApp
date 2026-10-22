@@ -75,6 +75,20 @@ describe('useStoreOrders', () => {
     expect(mountedOrders.storeOrders.orders.value).toEqual([])
   })
 
+  it('stores the status timeline returned by the tracking endpoint', async () => {
+    const statusTimeline = [
+      { code: 'PENDING_AVAILABILITY', label: 'Pendiente de confirmación', state: 'COMPLETED' },
+      { code: 'CONFIRMED', label: 'Pedido confirmado', state: 'CURRENT' }
+    ]
+    const apiRequest = vi.fn().mockResolvedValue({ orderId: 42, status: 'CONFIRMED', statusTimeline })
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', apiRequest, now: () => 1000 })
+    mountedOrders.storeOrders.addOrder({ orderId: 42, orderTrackingToken: 'private-token' })
+
+    await expect(mountedOrders.storeOrders.syncOrder(42)).resolves.toBe('ok')
+
+    expect(mountedOrders.storeOrders.orders.value[0].statusTimeline).toEqual(statusTimeline)
+  })
+
   it('keeps the order and exposes an error on transient failures', async () => {
     const apiRequest = vi.fn().mockRejectedValue(Object.assign(new Error('boom'), { status: 500 }))
     mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', apiRequest, now: () => 1000 })

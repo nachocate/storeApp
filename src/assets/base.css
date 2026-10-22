@@ -12,6 +12,18 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
+  --status-success: #15803d;
+  --status-success-soft: #dcfce7;
+  --status-info: #1d4ed8;
+  --status-info-soft: #dbeafe;
+  --status-warning: #b45309;
+  --status-warning-soft: #fef3c7;
+  --status-progress: #7c3aed;
+  --status-progress-soft: #ede9fe;
+  --status-danger: #b91c1c;
+  --status-danger-soft: #fee2e2;
+  --status-neutral: #64748b;
+  --status-neutral-soft: #e2e8f0;
 }
 
 html {

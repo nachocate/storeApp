@@ -14,6 +14,12 @@ Para diagnosticar el proxy temporalmente, definí `API_PROXY_LOGGING` con el val
 
 El Worker definido en `worker/index.js` sirve los archivos de `dist`, mantiene el fallback de Vue para rutas como `/:storeSlug` y reenvía las solicitudes de la tienda al backend en el mismo origen, por lo que no es necesario abrir CORS. `keep_vars` conserva las variables configuradas desde Cloudflare entre deploys. En Cloudflare Workers Builds, usá `npm run build` como comando de build, `npx wrangler deploy --config wrangler.jsonc` como comando de deploy y `npx wrangler preview --config wrangler.jsonc` como comando de preview.
 
+## Checkout con Mercado Pago
+
+El storefront consulta `checkout-options` para mostrar Mercado Pago sólo cuando la API lo habilita para la modalidad seleccionada. El backend debe crear la preferencia de Checkout Pro, devolver `mercadoPagoCheckoutUrl` y `orderTrackingToken` en el checkout, y confirmar el pedido únicamente desde su webhook validado. No configures credenciales de Mercado Pago en Vite ni en este repositorio.
+
+Antes de probar el flujo, configurá en el backend el retorno de Checkout Pro a la ruta de seguimiento de la tienda (`/{storeSlug}/orders/{orderId}`); el storefront guarda el token antes de redirigir y consulta el estado mediante la API/SSE al volver. Probá primero con cuentas de prueba de Mercado Pago y una tienda vinculada a una cuenta vendedora de prueba.
+
 
 ## Recommended IDE Setup
 
