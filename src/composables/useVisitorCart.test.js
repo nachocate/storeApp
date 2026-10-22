@@ -209,4 +209,45 @@ describe('useVisitorCart', () => {
       items: []
     })
   })
+
+  it('adds and removes promotion bundles with the latest revision and replaces the cart', async () => {
+    fetch
+      .mockResolvedValueOnce(jsonResponse({ cart: { revision: 0 }, accessToken: 'opaque-token' }, 201))
+      .mockResolvedValueOnce(jsonResponse({
+        cart: { revision: 1, items: [{ productId: 'product-1', quantity: '2.000' }], discountAmount: '10' }
+      }))
+      .mockResolvedValueOnce(jsonResponse({ cart: { revision: 2, items: [] } }))
+    mountedCart = createMountedCart()
+
+    await mountedCart.cart.initializeCart()
+    await expect(mountedCart.cart.addPromotionBundle(5)).resolves.toEqual({ ok: true })
+    expect(mountedCart.cart.cart.value).toEqual([{ id: 'product-1', quantity: 2 }])
+    await mountedCart.cart.removePromotionBundle(5)
+
+    const [addUrl, addOptions] = fetch.mock.calls[1]
+    expect(addUrl).toBe('/api/v1/stores/almacen-demo/carts/current/promotion-bundles/5/add')
+    expect(addOptions.method).toBe('POST')
+    expect(addOptions.headers['X-Cart-Token']).toBe('opaque-token')
+    expect(addOptions.body).toBe(JSON.stringify({ revision: 0 }))
+    const [removeUrl, removeOptions] = fetch.mock.calls[2]
+    expect(removeUrl).toContain('/promotion-bundles/5/remove')
+    expect(removeOptions.body).toBe(JSON.stringify({ revision: 1 }))
+    expect(mountedCart.cart.cart.value).toEqual([])
+  })
+
+  it('reloads the cart and reports a friendly message on a revision conflict', async () => {
+    fetch
+      .mockResolvedValueOnce(jsonResponse({ cart: { revision: 0 }, accessToken: 'opaque-token' }, 201))
+      .mockResolvedValueOnce(jsonResponse({ code: 'cart_revision_conflict' }, 409))
+      .mockResolvedValueOnce(jsonResponse({ cart: { revision: 3, items: [] } }))
+    mountedCart = createMountedCart()
+
+    await mountedCart.cart.initializeCart()
+    const result = await mountedCart.cart.addPromotionBundle(5)
+
+    expect(result).toMatchObject({ ok: false, code: 'cart_revision_conflict' })
+    expect(result.message).toMatch(/carrito cambió/)
+    expect(fetch.mock.calls[2][0]).toContain('/carts/current')
+    expect(mountedCart.cart.cartRevision.value).toBe(3)
+  })
 })

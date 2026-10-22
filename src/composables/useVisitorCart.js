@@ -3,6 +3,7 @@ import { requestStoreApi } from '../api/store.js'
 import { STORE_SLUG } from '../config/store.js'
 import { formatCurrency } from '../utils/formatCurrency.js'
 import { formatQuantity, roundQuantity } from '../utils/quantityRules.js'
+import { getBundleErrorMessage } from '../utils/normalizePromotion.js'
 
 const CART_STORAGE_KEY = `vitrinapp-cart-${encodeURIComponent(STORE_SLUG)}`
 
@@ -20,6 +21,7 @@ export const useVisitorCart = ({ products }) => {
   const cartError = ref('')
   const cartLoading = ref(false)
   const busyProductIds = ref([])
+  const busyPromotionId = ref(null)
   const isProductBusy = (productId) => busyProductIds.value.includes(productId)
   const productQty = ref({})
   const cartMutations = new Map()
@@ -376,6 +378,54 @@ export const useVisitorCart = ({ products }) => {
     queueCartRequest(productId, null)
   }
 
+  const sendPromotionBundle = async (promotionId, action) => {
+    await flushCartRequests()
+    await ensureCart()
+    if (cartRevision.value === null) await refreshCurrentCart()
+    if (cartRevision.value === null) throw new Error('La API no devolvió la revisión del carrito.')
+
+    const response = await requestStoreApi(
+      `/carts/current/promotion-bundles/${encodeURIComponent(promotionId)}/${action}`,
+      { method: 'POST', cartToken: cartToken.value, body: { revision: cartRevision.value } }
+    )
+    applyCartSnapshot(response)
+  }
+
+  // Bundle requests run one at a time so each one uses the revision returned by the previous one.
+  let bundleQueue = Promise.resolve()
+  const mutatePromotionBundle = (promotionId, action) => {
+    const run = async () => {
+      cartLoading.value = true
+      cartError.value = ''
+      busyPromotionId.value = promotionId
+      try {
+        await sendPromotionBundle(promotionId, action)
+        return { ok: true }
+      } catch (error) {
+        // A conflict may leave the local cart stale; the user retries manually.
+        if (error.code === 'cart_revision_conflict' && cartToken.value) {
+          try {
+            await refreshCurrentCart()
+          } catch {
+            // Keep the last known cart visible when recovery is unavailable.
+          }
+        }
+        cartError.value = ''
+        return { ok: false, code: error.code, message: getBundleErrorMessage(error) }
+      } finally {
+        busyPromotionId.value = null
+        cartLoading.value = false
+        persistCart()
+      }
+    }
+    const result = bundleQueue.then(run)
+    bundleQueue = result
+    return result
+  }
+
+  const addPromotionBundle = (promotionId) => mutatePromotionBundle(promotionId, 'add')
+  const removePromotionBundle = (promotionId) => mutatePromotionBundle(promotionId, 'remove')
+
   const clearCompletedCart = (order) => {
     if (!order || order.cartToken !== cartToken.value) return
     clearCartState()
@@ -386,7 +436,9 @@ export const useVisitorCart = ({ products }) => {
   })
 
   return {
+    addPromotionBundle,
     addToCart,
+    busyPromotionId,
     cart,
     cartError,
     cartItems,
@@ -411,6 +463,7 @@ export const useVisitorCart = ({ products }) => {
     productQty,
     refreshCurrentCart,
     removeItem,
+    removePromotionBundle,
     restoreCart,
     subtotal,
     totalAmount,

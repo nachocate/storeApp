@@ -34,7 +34,10 @@ export const BASE_DOMAIN = resolveBaseDomain({
   VITE_BASE_DOMAIN: import.meta.env?.VITE_BASE_DOMAIN
 })
 
-// Returns the store slug from "slug.<baseDomain>", or '' when the host is not a store subdomain.
+// Subdomains ending in "-dev" belong to the dev branch deployment: "slug-dev.<base>" serves store "slug".
+const DEV_SUFFIX = '-dev'
+
+// Returns the store slug from "slug[-dev].<baseDomain>", or '' when the host is not a store subdomain.
 export const resolveSubdomainSlug = (hostname = '', baseDomain = BASE_DOMAIN) => {
   const host = hostname.toLowerCase()
   const suffix = `.${baseDomain}`
@@ -42,7 +45,8 @@ export const resolveSubdomainSlug = (hostname = '', baseDomain = BASE_DOMAIN) =>
 
   const label = host.slice(0, -suffix.length)
   if (!label || label.includes('.') || RESERVED_SUBDOMAINS.includes(label)) return ''
-  return label
+  if (!label.endsWith(DEV_SUFFIX)) return label
+  return label.slice(0, -DEV_SUFFIX.length)
 }
 
 const isBaseDomainHost = (hostname = '', baseDomain = BASE_DOMAIN) => {

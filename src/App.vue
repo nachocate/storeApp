@@ -1,6 +1,8 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import ProductCard from './components/ProductCard.vue'
+import PromotionsCarousel from './components/PromotionsCarousel.vue'
+import { normalizePromotions } from './utils/normalizePromotion.js'
 import CheckoutPage from './components/CheckoutPage.vue'
 import WelcomePage from './components/WelcomePage.vue'
 import storeInfo from './data/store-info.json'
@@ -240,6 +242,7 @@ const loadBannerImage = (configuredImage) => {
 }
 const products = reactive([])
 const categoryData = ref([])
+const promotions = ref([])
 const productsLoading = ref(true)
 const productsLoadingMore = ref(false)
 const productsError = ref('')
@@ -251,7 +254,9 @@ const PRODUCTS_PAGE_SIZE = 20
 let productsObserver = null
 
 const {
+  addPromotionBundle,
   addToCart: addCartItem,
+  busyPromotionId,
   cart,
   cartError,
   cartItems,
@@ -290,6 +295,27 @@ const addToCart = (product) => {
 const updateProductQty = (product, delta) => {
   if (storeIsOpen.value === false) return
   updateCartProductQuantity(product, delta)
+}
+
+// The promotions endpoint is optional: failures just hide the block.
+const loadPromotions = async () => {
+  try {
+    promotions.value = normalizePromotions(await requestStoreApi('/promotions'))
+  } catch {
+    promotions.value = []
+  }
+}
+
+const promotionError = ref('')
+const addPromotion = async (promotion) => {
+  if (storeIsOpen.value === false || !promotion.bundleAddable) return
+  promotionError.value = ''
+  const result = await addPromotionBundle(promotion.id)
+  if (result.ok) return
+  promotionError.value = result.message
+  if (['promotion_not_available', 'promotion_bundle_not_addable'].includes(result.code)) {
+    await loadPromotions()
+  }
 }
 const {
   addOrder: saveStoreOrder,
@@ -364,7 +390,8 @@ const loadProducts = async ({ append = false } = {}) => {
     const [settingsResult, productsResult, categoriesResult] = await Promise.allSettled([
       append ? Promise.resolve(null) : requestStoreApi('/settings'),
       requestStoreApi(`/products?limit=${pageLimit}&offset=${pageOffset}`),
-      append ? Promise.resolve(null) : requestStoreApi('/categories')
+      append ? Promise.resolve(null) : requestStoreApi('/categories'),
+      append ? Promise.resolve(null) : loadPromotions()
     ])
 
     if (!append) {
@@ -531,6 +558,14 @@ const filteredProducts = computed(() => {
 
     return product.isVisible && matchesCategory && matchesSearch
   })
+})
+
+const visiblePromotions = computed(() => {
+  if (selectedCategory.value || productsLoading.value || storeNotFound.value) return []
+  const term = search.value.trim().toLocaleLowerCase('es')
+  return term
+    ? promotions.value.filter((promotion) => promotion.name.toLocaleLowerCase('es').includes(term))
+    : promotions.value
 })
 
 const sortedProducts = computed(() => {
@@ -863,7 +898,30 @@ const openOrderTracking = (requestedOrderId = '') => {
           <Message severity="error" :closable="false">{{ productsError }}</Message>
           <Button label="Reintentar" icon="pi pi-refresh" @click="loadProducts" />
         </div>
-        <Message v-else-if="filteredProducts.length === 0" severity="info" :closable="false" class="empty-state">
+        <Message v-if="promotionError && visiblePromotions.length" severity="error" class="promotions-section" @close="promotionError = ''">
+          {{ promotionError }}
+        </Message>
+        <PromotionsCarousel
+          v-if="visiblePromotions.length && !productsError"
+          class="promotions-section"
+          :promotions="visiblePromotions"
+          :busy-promotion-id="busyPromotionId"
+          :locked="cartLoading"
+          :store-closed="storeIsOpen === false"
+          @add-bundle="addPromotion"
+        />
+        <h2
+          v-if="visiblePromotions.length && !productsError && !productsLoading && filteredProducts.length"
+          class="products-title"
+        >
+          Productos
+        </h2>
+        <Message
+          v-if="!productsLoading && !storeNotFound && !productsError && filteredProducts.length === 0"
+          severity="info"
+          :closable="false"
+          class="empty-state"
+        >
           No se encontraron productos.
         </Message>
         <ProductCard
@@ -1469,6 +1527,18 @@ const openOrderTracking = (requestedOrderId = '') => {
 
   #products.products-grid {
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  }
+
+  .promotions-section,
+  .products-title {
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
+
+  .products-title {
+    margin: 0.5rem 0 0;
+    color: var(--primary-text-color);
+    font-size: 1.35rem;
   }
 
   .product-skeleton-grid {

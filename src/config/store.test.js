@@ -9,6 +9,11 @@ describe('resolveSubdomainSlug', () => {
     expect(resolveSubdomainSlug('Mi-Tienda.tiendario.cloud', base)).toBe('mi-tienda')
   })
 
+  it('strips the -dev suffix used by the dev branch deployment', () => {
+    expect(resolveSubdomainSlug('modo-dulce-dev.tiendario.cloud', base)).toBe('modo-dulce')
+    expect(resolveSubdomainSlug('-dev.tiendario.cloud', base)).toBe('')
+  })
+
   it('ignores the base domain, reserved, nested and foreign hosts', () => {
     expect(resolveSubdomainSlug('tiendario.cloud', base)).toBe('')
     expect(resolveSubdomainSlug('dev.tiendario.cloud', base)).toBe('')
