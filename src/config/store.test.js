@@ -1,17 +1,50 @@
 import { describe, expect, it } from 'vitest'
-import { resolveApiBaseUrl, resolveRequestedOrderId, resolveSubdomainSlug } from './store.js'
+import {
+  resolveApiBaseUrl,
+  resolveDeployEnv,
+  resolveForeignSubdomain,
+  resolveRequestedOrderId,
+  resolveSubdomainSlug
+} from './store.js'
+
+describe('resolveDeployEnv', () => {
+  it('is production unless VITE_DEPLOY_ENV is dev', () => {
+    expect(resolveDeployEnv()).toBe('production')
+    expect(resolveDeployEnv({ VITE_DEPLOY_ENV: 'DEV' })).toBe('dev')
+    expect(resolveDeployEnv({ VITE_DEPLOY_ENV: 'staging' })).toBe('production')
+  })
+})
+
+describe('resolveForeignSubdomain', () => {
+  const base = 'tiendario.cloud'
+
+  it('flags store-like hosts that belong to the other environment', () => {
+    expect(resolveForeignSubdomain('modo-dulce-dev.tiendario.cloud', base, 'production')).toBe('modo-dulce-dev')
+    expect(resolveForeignSubdomain('modo-dulce.tiendario.cloud', base, 'dev')).toBe('modo-dulce')
+  })
+
+  it('does not flag served, reserved, base or foreign-domain hosts', () => {
+    expect(resolveForeignSubdomain('modo-dulce.tiendario.cloud', base, 'production')).toBe('')
+    expect(resolveForeignSubdomain('modo-dulce-dev.tiendario.cloud', base, 'dev')).toBe('')
+    expect(resolveForeignSubdomain('dev.tiendario.cloud', base, 'production')).toBe('')
+    expect(resolveForeignSubdomain('tiendario.cloud', base, 'dev')).toBe('')
+    expect(resolveForeignSubdomain('localhost', base, 'dev')).toBe('')
+  })
+})
 
 describe('resolveSubdomainSlug', () => {
   const base = 'tiendario.cloud'
 
-  it('extracts the slug from a store subdomain', () => {
-    expect(resolveSubdomainSlug('mi-tienda.tiendario.cloud', base)).toBe('mi-tienda')
-    expect(resolveSubdomainSlug('Mi-Tienda.tiendario.cloud', base)).toBe('mi-tienda')
+  it('production serves only subdomains without the -dev suffix', () => {
+    expect(resolveSubdomainSlug('mi-tienda.tiendario.cloud', base, 'production')).toBe('mi-tienda')
+    expect(resolveSubdomainSlug('Mi-Tienda.tiendario.cloud', base, 'production')).toBe('mi-tienda')
+    expect(resolveSubdomainSlug('modo-dulce-dev.tiendario.cloud', base, 'production')).toBe('')
   })
 
-  it('strips the -dev suffix used by the dev branch deployment', () => {
-    expect(resolveSubdomainSlug('modo-dulce-dev.tiendario.cloud', base)).toBe('modo-dulce')
-    expect(resolveSubdomainSlug('-dev.tiendario.cloud', base)).toBe('')
+  it('dev serves only -dev subdomains and strips the suffix', () => {
+    expect(resolveSubdomainSlug('modo-dulce-dev.tiendario.cloud', base, 'dev')).toBe('modo-dulce')
+    expect(resolveSubdomainSlug('modo-dulce.tiendario.cloud', base, 'dev')).toBe('')
+    expect(resolveSubdomainSlug('-dev.tiendario.cloud', base, 'dev')).toBe('')
   })
 
   it('ignores the base domain, reserved, nested and foreign hosts', () => {

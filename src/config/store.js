@@ -34,19 +34,31 @@ export const BASE_DOMAIN = resolveBaseDomain({
   VITE_BASE_DOMAIN: import.meta.env?.VITE_BASE_DOMAIN
 })
 
-// Subdomains ending in "-dev" belong to the dev branch deployment: "slug-dev.<base>" serves store "slug".
+// The dev branch build must set VITE_DEPLOY_ENV=dev; any other value is a production build.
+export const resolveDeployEnv = (environment = {}) =>
+  String(environment.VITE_DEPLOY_ENV ?? '').trim().toLowerCase() === 'dev' ? 'dev' : 'production'
+
+export const DEPLOY_ENV = resolveDeployEnv({ VITE_DEPLOY_ENV: import.meta.env?.VITE_DEPLOY_ENV })
+
+// Dev deployments only serve "slug-dev.<base>" and production only serves "slug.<base>".
 const DEV_SUFFIX = '-dev'
 
-// Returns the store slug from "slug[-dev].<baseDomain>", or '' when the host is not a store subdomain.
-export const resolveSubdomainSlug = (hostname = '', baseDomain = BASE_DOMAIN) => {
+// Returns the store slug from the host, or '' when it is not a store subdomain of this deployment.
+export const resolveSubdomainSlug = (
+  hostname = '',
+  baseDomain = BASE_DOMAIN,
+  deployEnv = DEPLOY_ENV
+) => {
   const host = hostname.toLowerCase()
   const suffix = `.${baseDomain}`
   if (!host.endsWith(suffix)) return ''
 
   const label = host.slice(0, -suffix.length)
   if (!label || label.includes('.') || RESERVED_SUBDOMAINS.includes(label)) return ''
-  if (!label.endsWith(DEV_SUFFIX)) return label
-  return label.slice(0, -DEV_SUFFIX.length)
+
+  const isDevLabel = label.endsWith(DEV_SUFFIX)
+  if (deployEnv === 'dev') return isDevLabel ? label.slice(0, -DEV_SUFFIX.length) : ''
+  return isDevLabel ? '' : label
 }
 
 const isBaseDomainHost = (hostname = '', baseDomain = BASE_DOMAIN) => {
@@ -56,6 +68,21 @@ const isBaseDomainHost = (hostname = '', baseDomain = BASE_DOMAIN) => {
 
 const currentHostname = globalThis.window?.location.hostname ?? ''
 const subdomainSlug = resolveSubdomainSlug(currentHostname)
+
+// A store-like subdomain that this deployment does not serve (e.g. "-dev" host on a production build).
+export const resolveForeignSubdomain = (hostname = '', baseDomain = BASE_DOMAIN, deployEnv = DEPLOY_ENV) => {
+  if (resolveSubdomainSlug(hostname, baseDomain, deployEnv)) return ''
+  const host = hostname.toLowerCase()
+  const suffix = `.${baseDomain}`
+  if (!host.endsWith(suffix)) return ''
+
+  const label = host.slice(0, -suffix.length)
+  if (!label || label.includes('.') || RESERVED_SUBDOMAINS.includes(label)) return ''
+  return label
+}
+
+const foreignSubdomain = resolveForeignSubdomain(currentHostname)
+export const IS_ENVIRONMENT_MISMATCH = Boolean(foreignSubdomain)
 // Path-based slugs remain only for hosts outside the base domain (local development).
 const usesPathSlug = !isBaseDomainHost(currentHostname)
 const pathnameSegments = globalThis.window?.location.pathname.split('/').filter(Boolean) ?? []
@@ -88,11 +115,11 @@ export const REQUESTED_ORDER_ID = resolveRequestedOrderId(
   usesPathSlug
 )
 
-if (requestedSlug) {
+if (requestedSlug || foreignSubdomain) {
 	try {
-		storeSlug = decodeURIComponent(requestedSlug)
+		storeSlug = decodeURIComponent(requestedSlug || foreignSubdomain)
 	} catch {
-		storeSlug = requestedSlug
+		storeSlug = requestedSlug || foreignSubdomain
 	}
 }
 

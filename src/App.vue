@@ -7,7 +7,7 @@ import CheckoutPage from './components/CheckoutPage.vue'
 import WelcomePage from './components/WelcomePage.vue'
 import storeInfo from './data/store-info.json'
 import { requestStoreApi } from './api/store.js'
-import { IS_HOME, REQUESTED_ORDER_ID, STORE_SLUG, buildStorePath } from './config/store.js'
+import { IS_ENVIRONMENT_MISMATCH, IS_HOME, REQUESTED_ORDER_ID, STORE_SLUG, buildStorePath } from './config/store.js'
 import { useVisitorCart } from './composables/useVisitorCart.js'
 import { useStoreOrders } from './composables/useStoreOrders.js'
 import { resolveStoreAssetUrl } from './utils/resolveStoreAssetUrl.js'
@@ -16,6 +16,7 @@ import { isValidEmail } from './utils/invoiceData.js'
 import { isStoreCurrentlyOpen, normalizeWeeklyHours } from './utils/storeHours.js'
 import { blendColors, getContrastColor, getReadableColor } from './utils/contrast.js'
 const isHome = IS_HOME
+const environmentMismatch = IS_ENVIRONMENT_MISMATCH
 const LOADING_PRIMARY_COLOR = '#9ca3af'
 const LOADING_SECONDARY_COLOR = '#e5e7eb'
 const LOADING_BACKGROUND_COLOR = '#f3f4f6'
@@ -52,6 +53,7 @@ watch(() => branding.backgroundColor, (backgroundColor) => {
   )
 }, { immediate: true })
 if (isHome && typeof document !== 'undefined') document.title = 'VitrinApp | Tiendas locales'
+if (environmentMismatch && typeof document !== 'undefined') document.title = 'Tienda no encontrada | 404'
 const storeLogoModules = import.meta.glob('./assets/**/*.{png,jpg,jpeg,svg,webp}', {
   query: '?url',
   import: 'default'
@@ -586,7 +588,7 @@ const retryStore = async () => {
 }
 
 onMounted(async () => {
-  if (isHome) return
+  if (isHome || environmentMismatch) return
   storeClockInterval = window.setInterval(() => {
     currentClock.value = Date.now()
   }, 60_000)
@@ -677,7 +679,7 @@ const openOrderTracking = (requestedOrderId = '') => {
 
 <template>
   <head>
-    <title>{{ isHome ? 'VitrinApp | Tiendas locales' : storeNotFound ? 'Tienda no encontrada | 404' : storeError ? 'Algo salió mal | VitrinApp' : storeName || 'Cargando tienda' }}</title>
+    <title>{{ isHome ? 'VitrinApp | Tiendas locales' : storeNotFound || environmentMismatch ? 'Tienda no encontrada | 404' : storeError ? 'Algo salió mal | VitrinApp' : storeName || 'Cargando tienda' }}</title>
     <meta name="description" :content="isHome ? 'Descubre tiendas independientes en VitrinApp.' : `Bienvenido a ${storeName}, tu tienda en línea de confianza.`">
     <meta name="keywords" content="ecommerce, tienda online, compras, productos frescos, frutas, verduras">
     <meta name="author" :content="storeName">
@@ -686,7 +688,7 @@ const openOrderTracking = (requestedOrderId = '') => {
   <body>
     <main id="app" :style="storeThemeStyle" :class="{ 'home-shell': isHome }">
       <WelcomePage v-if="isHome" />
-      <section v-else-if="storeNotFound" class="store-status">
+      <section v-else-if="storeNotFound || environmentMismatch" class="store-status">
         <Message severity="error" :closable="false" class="store-status-message">
           <div>
             <strong>Error 404: No encontramos esta tienda</strong>
