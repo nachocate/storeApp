@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
+import { formatCurrency } from '../utils/formatCurrency.js'
 
 const props = defineProps({
   product: { type: Object, required: true },
@@ -28,7 +29,7 @@ watch(() => props.product.image, () => {
 })
 
 const unitPriceLabel = computed(() =>
-  `$${props.product.pricePerType.toFixed(2)} / ${props.product.unitSymbol ?? 'u'}`)
+  `${formatCurrency(props.product.pricePerType, props.product.currency)} / ${props.product.unitSymbol ?? 'u'}`)
 
 const addAriaLabel = computed(() => props.busy
   ? 'Procesando producto'

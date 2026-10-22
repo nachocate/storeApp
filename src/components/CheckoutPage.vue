@@ -192,6 +192,11 @@ const formatQuantity = (item) => formatQuantityWithUnit(item.quantity, item)
 const formatMoney = (amount, currency = quote.value?.currency || props.currency || 'ARS') =>
   formatCurrency(Number(amount ?? 0), currency)
 
+const effectiveDiscount = computed(() => {
+  const quoted = Number(quote.value?.discountAmount)
+  return Number.isFinite(quoted) && quote.value?.discountAmount != null ? quoted : props.discountAmount
+})
+
 const unwrapPayload = (payload, key) => payload?.[key] ?? payload?.data?.[key] ?? payload?.data ?? payload
 
 const today = () => {
@@ -823,6 +828,11 @@ onMounted(() => {
             </li>
           </ul>
           <div class="summary-totals">
+            <div v-if="effectiveDiscount > 0"><span>Subtotal</span><strong>{{ formatMoney(subtotal) }}</strong></div>
+            <div v-if="effectiveDiscount > 0" class="summary-discount">
+              <span><i class="pi pi-tag" aria-hidden="true"></i> Descuentos</span>
+              <strong>-{{ formatMoney(effectiveDiscount) }}</strong>
+            </div>
             <div><span>Carrito</span><strong>{{ formatMoney(quote?.cartTotalAmount ?? totalAmount) }}</strong></div>
             <div v-if="form.fulfillmentType === 'DELIVERY'"><span>Envío</span><strong>{{ formatMoney(quote?.deliveryFee) }}</strong></div>
             <div v-else><span>Retiro en tienda</span><strong>{{ formatMoney(quote?.deliveryFee ?? 0) }}</strong></div>
@@ -1174,6 +1184,11 @@ onMounted(() => {
   flex-direction: column;
   gap: 0.75rem;
   padding: 1rem 0 0;
+}
+
+.summary-discount strong,
+.summary-discount span {
+  color: var(--status-success);
 }
 
 .summary-total {

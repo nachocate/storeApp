@@ -72,16 +72,28 @@ const showImage = (promotion) => promotion.image && !failedImages.value.includes
             <div v-else class="promotion-media-fallback" role="img" :aria-label="`Imagen de ${promotion.name} no disponible`">
               <i class="pi pi-tag" aria-hidden="true"></i>
             </div>
-            <Tag v-if="hasDiscount(promotion)" value="Promoción" severity="primary" rounded class="promotion-badge" />
+            <Tag
+              v-if="promotion.discountPercent"
+              :value="`-${promotion.discountPercent}%`"
+              severity="success"
+              rounded
+              class="promotion-badge"
+              :aria-label="`${promotion.discountPercent}% de descuento`"
+            />
           </div>
           <div class="promotion-body">
             <h3>{{ promotion.name }}</h3>
             <p v-if="promotion.description" class="promotion-description">{{ promotion.description }}</p>
+            <ul v-if="promotion.products.length" class="promotion-products" aria-label="Productos incluidos">
+              <li v-for="(item, index) in promotion.products" :key="`${item.name}-${index}`">
+                <span class="promotion-product-quantity">{{ item.quantity }}×</span> {{ item.name }}
+              </li>
+            </ul>
             <p v-if="promotion.totalAmount !== null" class="promotion-prices">
               <s v-if="hasDiscount(promotion) && promotion.originalAmount !== null" class="promotion-original">
                 {{ formatCurrency(promotion.originalAmount, promotion.currency) }}
               </s>
-              <strong>{{ formatCurrency(promotion.totalAmount, promotion.currency) }}</strong>
+              <strong :class="{ 'promotion-total-discounted': hasDiscount(promotion) }">{{ formatCurrency(promotion.totalAmount, promotion.currency) }}</strong>
             </p>
             <Button
               v-if="!storeClosed && promotion.bundleAddable"
@@ -181,6 +193,8 @@ const showImage = (promotion) => promotion.image && !failedImages.value.includes
     position: absolute;
     top: 0.6rem;
     right: 0.6rem;
+    background: var(--status-success);
+    color: #fff;
     font-size: 0.72rem;
   }
 
@@ -207,6 +221,20 @@ const showImage = (promotion) => promotion.image && !failedImages.value.includes
     line-height: 1.4;
   }
 
+  .promotion-products {
+    display: grid;
+    gap: 0.2rem;
+    margin: 0;
+    padding: 0;
+    color: #374151;
+    font-size: 0.9rem;
+    list-style: none;
+  }
+
+  .promotion-product-quantity {
+    font-weight: 700;
+  }
+
   .promotion-prices {
     display: flex;
     flex-wrap: wrap;
@@ -218,6 +246,10 @@ const showImage = (promotion) => promotion.image && !failedImages.value.includes
 
   .promotion-prices strong {
     font-size: 1.15rem;
+  }
+
+  .promotion-total-discounted {
+    color: var(--status-success);
   }
 
   .promotion-original {

@@ -32,6 +32,30 @@ describe('normalizePromotions', () => {
     expect(normalizePromotions([{ id: 1 }])[0].bundleAddable).toBe(false)
   })
 
+  it('lists the included products and exposes the discount percentage', () => {
+    const [fromAmounts, fromApi] = normalizePromotions([
+      {
+        id: 1,
+        bundleOriginalAmount: '1000.00',
+        bundleDiscountAmount: '150.00',
+        requirements: [
+          { quantity: '2.000', product: { name: 'Alfajor' } },
+          { quantity: '1.000', productName: 'Budín', variantName: 'Vainilla' },
+          { quantity: '1.000' }
+        ]
+      },
+      { id: 2, discountPercentage: '12.5', bundleOriginalAmount: '1000.00', bundleDiscountAmount: '0.00' }
+    ])
+
+    expect(fromAmounts.products).toEqual([
+      { name: 'Alfajor', quantity: '2' },
+      { name: 'Budín (Vainilla)', quantity: '1' }
+    ])
+    expect(fromAmounts.discountPercent).toBe(15)
+    expect(fromApi.discountPercent).toBe(12.5)
+    expect(normalizePromotions([{ id: 3 }])[0]).toMatchObject({ products: [], discountPercent: null })
+  })
+
   it('falls back to the first requirement image when imageUrl is null', () => {
     const [promotion] = normalizePromotions([{
       id: 1,

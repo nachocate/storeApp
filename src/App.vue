@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import ProductCard from './components/ProductCard.vue'
 import PromotionsCarousel from './components/PromotionsCarousel.vue'
+import { setCatalogPrices } from './utils/formatCurrency.js'
 import { normalizePromotions } from './utils/normalizePromotion.js'
 import CheckoutPage from './components/CheckoutPage.vue'
 import WelcomePage from './components/WelcomePage.vue'
@@ -245,6 +246,15 @@ const loadBannerImage = (configuredImage) => {
 const products = reactive([])
 const categoryData = ref([])
 const promotions = ref([])
+watch(
+  () => [
+    ...products.map((product) => product.pricePerType),
+    ...promotions.value.flatMap((promotion) =>
+      [promotion.originalAmount, promotion.discountAmount, promotion.totalAmount])
+  ],
+  setCatalogPrices,
+  { immediate: true }
+)
 const productsLoading = ref(true)
 const productsLoadingMore = ref(false)
 const productsError = ref('')
@@ -357,7 +367,7 @@ const normalizeApiProduct = (product) => {
         ? 'accessory'
         : 'coffee',
     category,
-    productType,
+    currency: product.currency ?? 'ARS',
     pricePerType: Number(product.pricePerUnit),
     maxQuantityPerOrder,
     isSoldOut: !product.available,

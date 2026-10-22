@@ -6,14 +6,44 @@ const readImageSource = (entry) =>
 // Amounts stay as API strings: the backend owns bundle pricing and the client must not recompute it.
 const readAmount = (value) => (value == null || value === '' ? null : String(value))
 
+const readRequirements = (promotion) => {
+  const requirements = promotion.requirements ?? promotion.items ?? promotion.products ?? []
+  return Array.isArray(requirements) ? requirements : []
+}
+
 const readRequirementImage = (promotion) => {
-  const requirements = promotion.requirements ?? promotion.items ?? []
-  if (!Array.isArray(requirements)) return ''
-  for (const requirement of requirements) {
+  for (const requirement of readRequirements(promotion)) {
     const image = readImageSource(requirement?.product?.imageUrls?.[0] ?? requirement?.imageUrls?.[0])
     if (image) return image
   }
   return ''
+}
+
+const formatRequirementQuantity = (value) => {
+  const quantity = Number(value)
+  if (!Number.isFinite(quantity) || quantity <= 0) return ''
+  return String(Number(quantity.toFixed(3)))
+}
+
+const readIncludedProducts = (promotion) => readRequirements(promotion).flatMap((requirement) => {
+  const name = requirement?.productName ?? requirement?.product?.name ?? requirement?.name
+  if (typeof name !== 'string' || !name.trim()) return []
+  const variant = requirement?.variantName ?? requirement?.variant?.name
+  return [{
+    name: typeof variant === 'string' && variant.trim() ? `${name.trim()} (${variant.trim()})` : name.trim(),
+    quantity: formatRequirementQuantity(requirement.quantity ?? requirement.requiredQuantity) || '1'
+  }]
+})
+
+// Prefers the percentage sent by the API; the amounts fallback is only for display.
+const readDiscountPercent = (promotion) => {
+  const sent = Number(promotion.discountPercentage ?? promotion.discountPercent ?? promotion.percentage)
+  if (Number.isFinite(sent) && sent > 0) return Math.round(sent * 100) / 100
+
+  const original = Number(promotion.bundleOriginalAmount)
+  const discount = Number(promotion.bundleDiscountAmount)
+  if (!Number.isFinite(original) || !Number.isFinite(discount) || original <= 0 || discount <= 0) return null
+  return Math.round((discount / original) * 100)
 }
 
 export const normalizePromotion = (promotion) => {
@@ -27,6 +57,8 @@ export const normalizePromotion = (promotion) => {
     image: image ? resolveStoreAssetUrl(image) : '',
     currency: promotion.currency ?? 'ARS',
     bundleAddable: promotion.bundleAddable === true,
+    products: readIncludedProducts(promotion),
+    discountPercent: readDiscountPercent(promotion),
     originalAmount: readAmount(promotion.bundleOriginalAmount),
     discountAmount: readAmount(promotion.bundleDiscountAmount),
     totalAmount: readAmount(promotion.bundleTotalAmount)
