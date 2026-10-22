@@ -5,7 +5,7 @@ import CheckoutPage from './components/CheckoutPage.vue'
 import WelcomePage from './components/WelcomePage.vue'
 import storeInfo from './data/store-info.json'
 import { requestStoreApi } from './api/store.js'
-import { IS_HOME, REQUESTED_ORDER_ID, STORE_SLUG } from './config/store.js'
+import { IS_HOME, REQUESTED_ORDER_ID, STORE_SLUG, buildStorePath } from './config/store.js'
 import { useVisitorCart } from './composables/useVisitorCart.js'
 import { useStoreOrders } from './composables/useStoreOrders.js'
 import { resolveStoreAssetUrl } from './utils/resolveStoreAssetUrl.js'
@@ -617,7 +617,7 @@ const beginCheckout = async () => {
 }
 
 const returnToStore = () => {
-  const storePath = `/${encodeURIComponent(STORE_SLUG)}`
+  const storePath = buildStorePath(STORE_SLUG)
   if (window.location.pathname !== storePath || REQUESTED_ORDER_ID) {
     window.location.assign(storePath)
     return
@@ -720,18 +720,6 @@ const openOrderTracking = (requestedOrderId = '') => {
             Delivery
           </span>
           <div class="store-banner-links">
-            <a
-              v-if="whatsappUrl"
-              class="banner-action"
-              :href="whatsappUrl"
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Contactar por WhatsApp"
-              title="WhatsApp"
-            >
-              <i class="pi pi-whatsapp" aria-hidden="true"></i>
-              <span>WhatsApp</span>
-            </a>
             <a
               v-if="mapsUrl"
               class="banner-action"

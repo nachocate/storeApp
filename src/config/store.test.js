@@ -1,5 +1,22 @@
 import { describe, expect, it } from 'vitest'
-import { resolveApiBaseUrl, resolveRequestedOrderId } from './store.js'
+import { resolveApiBaseUrl, resolveRequestedOrderId, resolveSubdomainSlug } from './store.js'
+
+describe('resolveSubdomainSlug', () => {
+  const base = 'tiendario.cloud'
+
+  it('extracts the slug from a store subdomain', () => {
+    expect(resolveSubdomainSlug('mi-tienda.tiendario.cloud', base)).toBe('mi-tienda')
+    expect(resolveSubdomainSlug('Mi-Tienda.tiendario.cloud', base)).toBe('mi-tienda')
+  })
+
+  it('ignores the base domain, reserved, nested and foreign hosts', () => {
+    expect(resolveSubdomainSlug('tiendario.cloud', base)).toBe('')
+    expect(resolveSubdomainSlug('dev.tiendario.cloud', base)).toBe('')
+    expect(resolveSubdomainSlug('www.tiendario.cloud', base)).toBe('')
+    expect(resolveSubdomainSlug('a.b.tiendario.cloud', base)).toBe('')
+    expect(resolveSubdomainSlug('localhost', base)).toBe('')
+  })
+})
 
 describe('resolveApiBaseUrl', () => {
   it('returns an empty value when no environment variable is defined', () => {
@@ -26,6 +43,10 @@ describe('resolveRequestedOrderId', () => {
     expect(resolveRequestedOrderId('/almacen-demo', '?orderId=order-42&token=secret'))
       .toBe('order-42')
     expect(resolveRequestedOrderId('/almacen-demo', '?orderId=order%252F42')).toBe('order%2F42')
+  })
+
+  it('reads an order id from a subdomain order path', () => {
+    expect(resolveRequestedOrderId('/orders/order-42', '', false)).toBe('order-42')
   })
 
   it('returns an empty value when no order id is present', () => {
