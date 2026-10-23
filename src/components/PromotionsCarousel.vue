@@ -80,13 +80,24 @@ const showImage = (promotion) => promotion.image && !failedImages.value.includes
               class="promotion-badge"
               :aria-label="`${promotion.discountPercent}% de descuento`"
             />
+            <Tag
+              v-else-if="hasDiscount(promotion)"
+              :value="`-${formatCurrency(promotion.discountAmount, promotion.currency)}`"
+              severity="success"
+              rounded
+              class="promotion-badge"
+              :aria-label="`Descuento de ${formatCurrency(promotion.discountAmount, promotion.currency)}`"
+            />
           </div>
           <div class="promotion-body">
             <h3>{{ promotion.name }}</h3>
             <p v-if="promotion.description" class="promotion-description">{{ promotion.description }}</p>
             <ul v-if="promotion.products.length" class="promotion-products" aria-label="Productos incluidos">
               <li v-for="(item, index) in promotion.products" :key="`${item.name}-${index}`">
-                <span class="promotion-product-quantity">{{ item.quantity }}×</span> {{ item.name }}
+                <span class="promotion-product-quantity">
+                  {{ item.quantity }}<template v-if="item.unitSymbol"> {{ item.unitSymbol }}</template>
+                </span>
+                {{ item.name }}
               </li>
             </ul>
             <p v-if="promotion.totalAmount !== null" class="promotion-prices">
@@ -127,6 +138,9 @@ const showImage = (promotion) => promotion.image && !failedImages.value.includes
 
 <style scoped>
   .promotions {
+    width: 100%;
+    margin: 0;
+    padding: 0;
     display: grid;
     gap: 0.75rem;
     min-width: 0;
@@ -156,7 +170,7 @@ const showImage = (promotion) => promotion.image && !failedImages.value.includes
 
   .promotion-card {
     display: flex;
-    flex: 0 0 min(17rem, 78vw);
+    flex: 1 0 min(17rem, 78vw);
     flex-direction: column;
     overflow: hidden;
     border: 1px solid rgba(0, 0, 0, 0.06);
@@ -164,22 +178,39 @@ const showImage = (promotion) => promotion.image && !failedImages.value.includes
     background: rgba(255, 255, 255, 0.9);
     box-shadow: 0 16px 32px rgba(17, 24, 39, 0.08), 0 4px 12px rgba(17, 24, 39, 0.04);
     scroll-snap-align: start;
+    transition: box-shadow 0.2s ease;
+  }
+
+  .promotion-card:hover {
+    box-shadow: 0 22px 40px rgba(17, 24, 39, 0.12), 0 8px 16px rgba(17, 24, 39, 0.06);
   }
 
   .promotion-media {
     position: relative;
-    aspect-ratio: 16 / 10;
+    aspect-ratio: 1 / 1;
+    overflow: hidden;
     background: #f3f4f6;
+  }
+
+  .promotion-media::after {
+    position: absolute;
+    inset: 66.667% 0 0;
+    background: linear-gradient(to bottom, transparent 0%, var(--secondary-color) 100%);
+    content: '';
+    pointer-events: none;
   }
 
   .promotion-media img,
   .promotion-media-fallback {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
   }
 
   .promotion-media img {
     object-fit: cover;
+    object-position: center;
   }
 
   .promotion-media-fallback {
@@ -191,6 +222,7 @@ const showImage = (promotion) => promotion.image && !failedImages.value.includes
 
   .promotion-badge {
     position: absolute;
+    z-index: 1;
     top: 0.6rem;
     right: 0.6rem;
     background: var(--status-success);

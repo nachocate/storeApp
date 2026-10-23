@@ -29,15 +29,27 @@ const readIncludedProducts = (promotion) => readRequirements(promotion).flatMap(
   const name = requirement?.productName ?? requirement?.product?.name ?? requirement?.name
   if (typeof name !== 'string' || !name.trim()) return []
   const variant = requirement?.variantName ?? requirement?.variant?.name
+  const unitSymbol = requirement?.unitSymbol ?? requirement?.product?.unit?.symbol ?? requirement?.unit?.symbol
   return [{
     name: typeof variant === 'string' && variant.trim() ? `${name.trim()} (${variant.trim()})` : name.trim(),
-    quantity: formatRequirementQuantity(requirement.quantity ?? requirement.requiredQuantity) || '1'
+    quantity: formatRequirementQuantity(requirement.quantity ?? requirement.requiredQuantity) || '1',
+    unitSymbol: typeof unitSymbol === 'string' ? unitSymbol.trim() : ''
   }]
 })
 
 // Prefers the percentage sent by the API; the amounts fallback is only for display.
 const readDiscountPercent = (promotion) => {
-  const sent = Number(promotion.discountPercentage ?? promotion.discountPercent ?? promotion.percentage)
+  const discountType = typeof promotion.discountType === 'string'
+    ? promotion.discountType.trim().toUpperCase()
+    : ''
+  if (discountType && discountType !== 'PERCENTAGE') return null
+
+  const sent = Number(
+    promotion.discountPercentage ??
+    promotion.discountPercent ??
+    promotion.percentage ??
+    (discountType === 'PERCENTAGE' ? promotion.discountValue : null)
+  )
   if (Number.isFinite(sent) && sent > 0) return Math.round(sent * 100) / 100
 
   const original = Number(promotion.bundleOriginalAmount)
@@ -46,9 +58,25 @@ const readDiscountPercent = (promotion) => {
   return Math.round((discount / original) * 100)
 }
 
+const readDiscountAmount = (promotion) => {
+  const sent = readAmount(promotion.bundleDiscountAmount)
+  if (sent !== null && Number(sent) > 0) return sent
+
+  const discountType = typeof promotion.discountType === 'string'
+    ? promotion.discountType.trim().toUpperCase()
+    : ''
+  if (['AMOUNT', 'FIXED', 'FIXED_AMOUNT', 'FIXED_PRICE'].includes(discountType)) {
+    return readAmount(promotion.discountValue) ?? sent
+  }
+  return sent
+}
+
 export const normalizePromotion = (promotion) => {
   if (promotion?.id == null) return null
 
+  const discountType = typeof promotion.discountType === 'string'
+    ? promotion.discountType.trim().toUpperCase()
+    : ''
   const image = promotion.imageUrl ?? readRequirementImage(promotion)
   return {
     id: promotion.id,
@@ -60,7 +88,7 @@ export const normalizePromotion = (promotion) => {
     products: readIncludedProducts(promotion),
     discountPercent: readDiscountPercent(promotion),
     originalAmount: readAmount(promotion.bundleOriginalAmount),
-    discountAmount: readAmount(promotion.bundleDiscountAmount),
+    discountAmount: readDiscountAmount(promotion),
     totalAmount: readAmount(promotion.bundleTotalAmount)
   }
 }

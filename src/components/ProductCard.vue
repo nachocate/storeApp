@@ -61,7 +61,7 @@ const addAriaLabel = computed(() => props.busy
     <template #content>
       <div class="product-body">
       <h3>{{ product.name }}</h3>
-      <p class="product-description">{{ product.description }}</p>
+      <p v-if="product.description" class="product-description">{{ product.description }}</p>
 
       <p v-if="!storeClosed && unavailable" class="product-unavailable" role="status">No disponible</p>
       <Button

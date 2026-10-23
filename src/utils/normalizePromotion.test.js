@@ -48,12 +48,85 @@ describe('normalizePromotions', () => {
     ])
 
     expect(fromAmounts.products).toEqual([
-      { name: 'Alfajor', quantity: '2' },
-      { name: 'Budín (Vainilla)', quantity: '1' }
+      { name: 'Alfajor', quantity: '2', unitSymbol: '' },
+      { name: 'Budín (Vainilla)', quantity: '1', unitSymbol: '' }
     ])
     expect(fromAmounts.discountPercent).toBe(15)
     expect(fromApi.discountPercent).toBe(12.5)
     expect(normalizePromotions([{ id: 3 }])[0]).toMatchObject({ products: [], discountPercent: null })
+  })
+
+  it('shows a fixed discount amount instead of treating it as a percentage or final price', () => {
+    const [promotion] = normalizePromotions([{
+      id: 5,
+      discountType: 'FIXED_PRICE',
+      discountValue: '2500.00',
+      requirements: [{
+        productName: 'Naranja',
+        quantity: '1.000',
+        unitSymbol: 'kg'
+      }]
+    }])
+
+    expect(promotion).toMatchObject({
+      discountPercent: null,
+      discountAmount: '2500.00',
+      totalAmount: null,
+      products: [{ name: 'Naranja', quantity: '1', unitSymbol: 'kg' }]
+    })
+  })
+
+  it('uses the API discount value for percentage promotions', () => {
+    const [promotion] = normalizePromotions([{
+      id: 6,
+      discountType: 'PERCENTAGE',
+      discountValue: '12.5'
+    }])
+
+    expect(promotion.discountPercent).toBe(12.5)
+  })
+
+  it('normalizes a fixed-amount discount without turning it into a fixed bundle price', () => {
+    const [promotion] = normalizePromotions([{
+      id: 7,
+      name: 'Promo Con Frio',
+      description: 'Llevando 2 Arandanos y 1 Frutos de Bosque tenes un descuento de $2000',
+      discountType: 'FIXED_AMOUNT',
+      bundleDiscountAmount: '0.00',
+      discountValue: '2000.00',
+      requirements: [
+        { productName: 'Arandanos x Bolsa', quantity: '2.000', unitSymbol: 'u' },
+        { productName: 'Frutos Rojos x Bolsa', quantity: '1.000', unitSymbol: 'u' }
+      ]
+    }])
+
+    expect(promotion).toMatchObject({
+      name: 'Promo Con Frio',
+      discountPercent: null,
+      discountAmount: '2000.00',
+      totalAmount: null,
+      products: [
+        { name: 'Arandanos x Bolsa', quantity: '2', unitSymbol: 'u' },
+        { name: 'Frutos Rojos x Bolsa', quantity: '1', unitSymbol: 'u' }
+      ]
+    })
+  })
+
+  it('does not derive a percentage from the amounts of a fixed-amount promotion', () => {
+    const [promotion] = normalizePromotions([{
+      id: 3,
+      discountType: 'FIXED_AMOUNT',
+      discountValue: '2000.00',
+      bundleOriginalAmount: '12600.00',
+      bundleDiscountAmount: '2000.00',
+      bundleTotalAmount: '10600.00'
+    }])
+
+    expect(promotion).toMatchObject({
+      discountPercent: null,
+      discountAmount: '2000.00',
+      totalAmount: '10600.00'
+    })
   })
 
   it('falls back to the first requirement image when imageUrl is null', () => {
