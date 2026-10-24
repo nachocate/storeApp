@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import ProductCard from './components/ProductCard.vue'
+import ProductPage from './components/ProductPage.vue'
 import PromotionsCarousel from './components/PromotionsCarousel.vue'
 import { setCatalogPrices } from './utils/formatCurrency.js'
 import { normalizePromotions } from './utils/normalizePromotion.js'
@@ -352,15 +353,18 @@ const normalizeApiProduct = (product) => {
   const maxQuantityPerOrder = product.maxQuantityPerOrder == null
     ? null
     : Number(product.maxQuantityPerOrder)
-  const imageEntry = product.imageUrls?.[0]
-  const image = typeof imageEntry === 'string' ? imageEntry : imageEntry?.url ?? imageEntry?.src ?? ''
+  const images = (Array.isArray(product.imageUrls) ? product.imageUrls : [])
+    .map((entry) => typeof entry === 'string' ? entry : entry?.url ?? entry?.src ?? '')
+    .filter(Boolean)
+    .map((image) => resolveStoreAssetUrl(image))
   const category = product.category?.name ?? 'Otros'
 
   return {
     id: product.id,
     name: product.name,
     description: product.description ?? '',
-    image: resolveStoreAssetUrl(image),
+    image: images[0] ?? '',
+    images,
     imageFallback: category.toLocaleLowerCase('es').includes('pasteler')
       ? 'pastry'
       : category.toLocaleLowerCase('es').includes('accesor')
@@ -461,7 +465,7 @@ const loadProducts = async ({ append = false } = {}) => {
     productsOffset.value = Number(payload.offset ?? pageOffset) + loadedProducts.length
     const totalProducts = Number(payload.total)
     productsHasMore.value = loadedProducts.length > 0 && (Number.isFinite(totalProducts)
-      ? products.length < totalProducts
+      ? productsOffset.value < totalProducts
       : loadedProducts.length >= pageLimit)
   } catch {
     if (append) {
@@ -615,6 +619,7 @@ onMounted(async () => {
   await loadProducts()
   if (!storeNotFound.value && !storeError.value) {
     await initializeCart()
+    await ensureSelectedProduct()
     await loadDeliveryAvailability()
     if (REQUESTED_ORDER_ID) openOrderTracking(REQUESTED_ORDER_ID)
   }
@@ -685,6 +690,62 @@ const openOrderTracking = (requestedOrderId = '') => {
   checkoutOpen.value = true
 }
 
+const PRODUCT_QUERY_PARAM = 'product'
+const readProductIdFromUrl = () => new URLSearchParams(window.location.search).get(PRODUCT_QUERY_PARAM) ?? ''
+const selectedProductId = ref(readProductIdFromUrl())
+const productPageLoading = ref(false)
+const productPageError = ref('')
+const selectedProduct = computed(() =>
+  products.find((product) => String(product.id) === selectedProductId.value) ?? null)
+
+const ensureSelectedProduct = async () => {
+  const productId = selectedProductId.value
+  if (!productId || selectedProduct.value) return
+
+  productPageLoading.value = true
+  productPageError.value = ''
+  try {
+    const payload = await requestStoreApi(`/products/${encodeURIComponent(productId)}`)
+    if (selectedProductId.value !== productId || selectedProduct.value) return
+    if (payload?.id == null) throw new Error('Invalid product payload')
+    products.push(normalizeApiProduct(payload))
+  } catch (error) {
+    if (error?.status !== 404) {
+      productPageError.value = 'No pudimos cargar el producto. Comprueba la conexión y vuelve a intentarlo.'
+    }
+  } finally {
+    productPageLoading.value = false
+  }
+}
+
+const openProductPage = (product) => {
+  const url = new URL(window.location.href)
+  url.searchParams.set(PRODUCT_QUERY_PARAM, String(product.id))
+  window.history.pushState({ productPage: true }, '', url)
+  productPageError.value = ''
+  selectedProductId.value = String(product.id)
+}
+
+const closeProductPage = () => {
+  if (window.history.state?.productPage) {
+    window.history.back()
+    return
+  }
+  const url = new URL(window.location.href)
+  url.searchParams.delete(PRODUCT_QUERY_PARAM)
+  window.history.replaceState(null, '', url)
+  selectedProductId.value = ''
+  productPageError.value = ''
+}
+
+const syncProductPageWithUrl = () => {
+  selectedProductId.value = readProductIdFromUrl()
+  productPageError.value = ''
+  void ensureSelectedProduct()
+}
+
+onMounted(() => window.addEventListener('popstate', syncProductPageWithUrl))
+onBeforeUnmount(() => window.removeEventListener('popstate', syncProductPageWithUrl))
 </script>
 
 <template>
@@ -952,6 +1013,7 @@ const openOrderTracking = (requestedOrderId = '') => {
           @change-quantity="updateProductQty(product, $event)"
           @add-to-cart="addToCart(product)"
           @remove-from-cart="promptRemoveFromCart(product.id)"
+          @open="openProductPage(product)"
         />
         <div v-if="productsHasMore && !storeNotFound && !settingsLoading" class="load-more-region">
           <Message v-if="productsMoreError" severity="error" :closable="false">{{ productsMoreError }}</Message>
@@ -959,6 +1021,27 @@ const openOrderTracking = (requestedOrderId = '') => {
           <span ref="loadMoreSentinel" class="load-more-sentinel" aria-hidden="true"></span>
         </div>
       </section>
+
+      <ProductPage
+        v-if="selectedProductId"
+        :product="selectedProduct"
+        :loading="productPageLoading || productsLoading"
+        :error="productPageError"
+        :quantity-label="selectedProduct ? formatQuantityLabel(selectedProduct) : ''"
+        :store-closed="storeIsOpen === false"
+        :busy="selectedProduct ? isProductBusy(selectedProduct.id) : false"
+        :locked="cartLoading"
+        :in-cart="selectedProduct ? Boolean(cart.find((item) => item.id === selectedProduct.id)) : false"
+        :decrease-removes-item="selectedProduct ? getCartQuantity(selectedProduct.id) > 0 && getCartQuantity(selectedProduct.id) <= selectedProduct.minQuantity : false"
+        :unavailable="selectedProduct ? isUnavailable(selectedProduct) : false"
+        :decrease-disabled="selectedProduct ? getProductQuantity(selectedProduct) <= selectedProduct.minQuantity && !getCartQuantity(selectedProduct.id) : false"
+        :increase-disabled="selectedProduct ? isProductLimitReached(selectedProduct) || cartLoading : false"
+        @back="closeProductPage"
+        @retry="ensureSelectedProduct"
+        @change-quantity="updateProductQty(selectedProduct, $event)"
+        @add-to-cart="addToCart(selectedProduct)"
+        @remove-from-cart="promptRemoveFromCart(selectedProduct.id)"
+      />
 
       <Dialog
         v-model:visible="removeDialogVisible"

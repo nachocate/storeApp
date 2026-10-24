@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { formatCurrency } from '../utils/formatCurrency.js'
+import ProductActions from './ProductActions.vue'
 
 const props = defineProps({
   product: { type: Object, required: true },
@@ -15,29 +16,16 @@ const props = defineProps({
   increaseDisabled: { type: Boolean, default: false }
 })
 
-defineEmits(['change-quantity', 'add-to-cart', 'remove-from-cart'])
+defineEmits(['change-quantity', 'add-to-cart', 'remove-from-cart', 'open'])
 
-const displayInCart = ref(props.inCart)
 const imageFailed = ref(false)
-const hoveredQuantityControl = ref('')
 
-watch(() => [props.inCart, props.busy], ([inCart, busy]) => {
-  if (!busy) displayInCart.value = inCart
-}, { immediate: true })
 watch(() => props.product.image, () => {
   imageFailed.value = false
 })
 
 const unitPriceLabel = computed(() =>
   `${formatCurrency(props.product.pricePerType, props.product.currency)} / ${props.product.unitSymbol ?? 'u'}`)
-
-const addAriaLabel = computed(() => props.busy
-  ? 'Procesando producto'
-  : props.inCart
-    ? `Añadido ${props.product.name}`
-    : props.product.isSoldOut
-      ? `Agotado ${props.product.name}`
-      : `Añadir ${props.product.name}`)
 </script>
 
 <template>
@@ -45,13 +33,14 @@ const addAriaLabel = computed(() => props.busy
     <template #header>
       <img
         v-if="product.image && !imageFailed"
-        class="product-image"
+        class="product-image product-image-clickable"
         :src="product.image"
         :alt="product.name"
         loading="lazy"
+        @click="$emit('open')"
         @error="imageFailed = true"
       />
-      <div v-else class="product-image product-image-fallback" role="img" :aria-label="`Imagen de ${product.name} no disponible`">
+      <div v-else class="product-image product-image-fallback product-image-clickable" role="img" :aria-label="`Imagen de ${product.name} no disponible`" @click="$emit('open')">
         <i :class="product.imageFallback === 'pastry' ? 'pi pi-sparkles' : product.imageFallback === 'accessory' ? 'pi pi-gift' : 'pi pi-shopping-bag'" aria-hidden="true"></i>
       </div>
       <Tag :value="product.category" severity="primary" rounded class="category-badge" />
@@ -60,49 +49,26 @@ const addAriaLabel = computed(() => props.busy
 
     <template #content>
       <div class="product-body">
-      <h3>{{ product.name }}</h3>
+      <h3>
+        <button type="button" class="product-link" @click="$emit('open')">{{ product.name }}</button>
+      </h3>
       <p v-if="product.description" class="product-description">{{ product.description }}</p>
 
-      <p v-if="!storeClosed && unavailable" class="product-unavailable" role="status">No disponible</p>
-      <Button
-        v-else-if="!storeClosed && !displayInCart"
-        class="add-to-cart"
-        type="button"
-        label="Agregar al carrito"
-        icon="pi pi-cart-plus"
-        :disabled="busy || locked || product.isSoldOut"
-        :loading="busy"
-        loading-icon="pi pi-spin pi-spinner"
-        :aria-label="addAriaLabel"
-        @click="$emit('add-to-cart')"
+      <ProductActions
+        :product="product"
+        :quantity-label="quantityLabel"
+        :store-closed="storeClosed"
+        :busy="busy"
+        :locked="locked"
+        :in-cart="inCart"
+        :decrease-removes-item="decreaseRemovesItem"
+        :unavailable="unavailable"
+        :decrease-disabled="decreaseDisabled"
+        :increase-disabled="increaseDisabled"
+        @change-quantity="$emit('change-quantity', $event)"
+        @add-to-cart="$emit('add-to-cart')"
+        @remove-from-cart="$emit('remove-from-cart')"
       />
-      <div v-else-if="!storeClosed" class="product-quantity" aria-label="Seleccionar cantidad">
-        <Button
-          type="button"
-          :disabled="busy || locked || (unavailable && !decreaseRemovesItem) || decreaseDisabled"
-          :aria-label="decreaseRemovesItem ? `Eliminar ${product.name} del carrito` : `Reducir cantidad de ${product.name}`"
-          :icon="decreaseRemovesItem ? 'pi pi-trash' : 'pi pi-minus'"
-          severity="secondary"
-          :text="hoveredQuantityControl !== 'decrease'"
-          rounded
-          @mouseenter="hoveredQuantityControl = 'decrease'"
-          @mouseleave="hoveredQuantityControl = ''"
-          @click="decreaseRemovesItem ? $emit('remove-from-cart') : $emit('change-quantity', -product.step)"
-        />
-        <span>{{ quantityLabel }}</span>
-        <Button
-          type="button"
-          :disabled="busy || locked || unavailable || increaseDisabled"
-          :aria-label="`Aumentar cantidad de ${product.name}`"
-          icon="pi pi-plus"
-          severity="secondary"
-          :text="hoveredQuantityControl !== 'increase'"
-          rounded
-          @mouseenter="hoveredQuantityControl = 'increase'"
-          @mouseleave="hoveredQuantityControl = ''"
-          @click="$emit('change-quantity', product.step)"
-        />
-      </div>
 
       </div>
     </template>
@@ -233,6 +199,29 @@ const addAriaLabel = computed(() => props.busy
     color: #111827;
   }
 
+  .product-card .product-link {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: inherit;
+    cursor: pointer;
+  }
+
+  .product-card .product-link:hover {
+    text-decoration: underline;
+  }
+
+  .product-card .product-link:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+  }
+
+  .product-image-clickable {
+    cursor: pointer;
+  }
+
   .product-description {
     margin: 0;
     max-height: 4.5em;
@@ -242,48 +231,6 @@ const addAriaLabel = computed(() => props.busy
     line-height: 1.5;
     scrollbar-color: #9ca3af transparent;
     scrollbar-width: thin;
-  }
-
-  .product-card .add-to-cart.p-button {
-    width: 100%;
-    min-height: 3rem;
-    margin-top: auto;
-    border-radius: 12px;
-    font-weight: 700;
-  }
-
-  .product-quantity {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.8rem;
-    margin-top: auto;
-    padding: 0.5rem 0.7rem;
-    border-radius: 12px;
-    background: color-mix(in srgb, var(--secondary-color) 20%, #fff);
-    border: 1px solid color-mix(in srgb, var(--secondary-color) 52%, #fff);
-    font-weight: 700;
-  }
-
-  .product-unavailable {
-    margin: auto 0 0;
-    padding: 0.75rem 0.7rem;
-    border: 1px solid color-mix(in srgb, var(--primary-on-background-color, #18251c) 25%, #fff);
-    border-radius: 12px;
-    background: color-mix(in srgb, var(--primary-on-background-color, #18251c) 8%, #fff);
-    color: var(--primary-on-background-color, #18251c);
-    font-weight: 700;
-    text-align: center;
-  }
-
-  .product-quantity :deep(.p-button) {
-    width: 2rem;
-    height: 2rem;
-    color: var(--primary-text-color);
-  }
-
-  .product-quantity :deep(.p-button:focus-visible) {
-    box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--primary-color) 26%, transparent);
   }
 
   .category-badge {
