@@ -24,8 +24,19 @@ watch(() => props.product.image, () => {
   imageFailed.value = false
 })
 
-const unitPriceLabel = computed(() =>
-  `${formatCurrency(props.product.pricePerType, props.product.currency)} / ${props.product.unitSymbol ?? 'u'}`)
+const unitPriceLabel = computed(() => {
+  if (props.product.productType !== 'VARIANT') {
+    return `${formatCurrency(props.product.pricePerType, props.product.currency)} / ${props.product.unitSymbol ?? 'u'}`
+  }
+
+  const availablePrices = (props.product.variantConfiguration?.variants ?? [])
+    .filter((variant) => variant.available)
+    .map((variant) => Number(variant.pricePerUnit))
+    .filter(Number.isFinite)
+  if (availablePrices.length === 0) return 'Sin opciones disponibles'
+
+  return `Desde ${formatCurrency(Math.min(...availablePrices), props.product.currency)} / ${props.product.unitSymbol ?? 'u'}`
+})
 </script>
 
 <template>
@@ -52,9 +63,29 @@ const unitPriceLabel = computed(() =>
       <h3>
         <button type="button" class="product-link" @click="$emit('open')">{{ product.name }}</button>
       </h3>
-      <p v-if="product.description" class="product-description">{{ product.description }}</p>
+      <div v-if="product.description" class="product-description-container">
+        <p class="product-description">{{ product.description }}</p>
+        <button
+          type="button"
+          class="product-description-more"
+          :aria-label="`Leer descripción completa de ${product.name}`"
+          @click="$emit('open')"
+        >
+          Ver más...
+        </button>
+      </div>
 
+      <Button
+        v-if="product.productType === 'VARIANT'"
+        class="add-to-cart"
+        type="button"
+        :disabled="storeClosed || !product.variantConfiguration?.variants?.some((variant) => variant.available)"
+        label="Elegir opciones"
+        icon="pi pi-sliders-h"
+        @click="$emit('open')"
+      />
       <ProductActions
+        v-else
         :product="product"
         :quantity-label="quantityLabel"
         :store-closed="storeClosed"
@@ -193,10 +224,12 @@ const unitPriceLabel = computed(() =>
   }
 
   .product-card h3 {
+    width: 100%;
     margin: 0;
     font-size: 1.2rem;
     line-height: 1.3;
     color: #111827;
+    text-align: left;
   }
 
   .product-card .product-link {
@@ -218,19 +251,52 @@ const unitPriceLabel = computed(() =>
     outline-offset: 2px;
   }
 
+  .product-card .add-to-cart.p-button {
+    width: 100%;
+    min-height: 3rem;
+    margin-top: auto;
+    border-radius: 12px;
+    font-weight: 700;
+  }
+
   .product-image-clickable {
     cursor: pointer;
   }
 
   .product-description {
     margin: 0;
-    max-height: 4.5em;
-    overflow-y: auto;
-    overscroll-behavior: contain;
+    display: -webkit-box;
+    overflow: hidden;
     color: #4b5563;
     line-height: 1.5;
-    scrollbar-color: #9ca3af transparent;
-    scrollbar-width: thin;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    text-align: left;
+    width: 100%;
+  }
+
+  .product-description-container {
+    width: 100%;
+    text-align: left;
+  }
+
+  .product-description-more {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--primary-color);
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .product-description-more:hover {
+    text-decoration: underline;
+  }
+
+  .product-description-more:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
   }
 
   .category-badge {
@@ -272,7 +338,6 @@ const unitPriceLabel = computed(() =>
     .product-card .product-description {
       font-size: 0.8rem;
       line-height: 1.4;
-      max-height: 4.2em;
     }
 
     .product-card h3 {

@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { formatCurrency } from '../utils/formatCurrency.js'
 import ProductActions from './ProductActions.vue'
 import ProductGallery from './ProductGallery.vue'
@@ -19,11 +19,91 @@ const props = defineProps({
   increaseDisabled: { type: Boolean, default: false }
 })
 
-defineEmits(['back', 'retry', 'change-quantity', 'add-to-cart', 'remove-from-cart'])
+const emit = defineEmits(['back', 'retry', 'change-quantity', 'add-to-cart', 'remove-from-cart', 'variant-change'])
 
-const unitPriceLabel = computed(() => props.product
-  ? `${formatCurrency(props.product.pricePerType, props.product.currency)} / ${props.product.unitSymbol ?? 'u'}`
-  : '')
+const selectedOptions = ref({})
+watch(() => [props.product?.id, props.product?.variantConfiguration?.variants], () => {
+  const firstAvailableVariant = props.product?.variantConfiguration?.variants
+    ?.find((variant) => variant.available)
+  selectedOptions.value = Object.fromEntries(
+    firstAvailableVariant?.selections.map(({ optionName, value }) => [optionName, value]) ?? []
+  )
+}, { immediate: true })
+
+const variantOptions = computed(() => props.product?.variantConfiguration?.options ?? [])
+const variants = computed(() => props.product?.variantConfiguration?.variants ?? [])
+const selectedVariant = computed(() => {
+  if (variantOptions.value.some((option) => !selectedOptions.value[option.name])) return null
+
+  return variants.value.find((variant) =>
+    variant.available && variant.selections.every((selection) =>
+      selectedOptions.value[selection.optionName] === selection.value
+    )
+  ) ?? null
+})
+watch(selectedVariant, (variant) => emit('variant-change', variant), { immediate: true })
+
+const canSelectValue = (optionIndex, option, value) => {
+  const precedingOptions = variantOptions.value.slice(0, optionIndex)
+  return variants.value.some((variant) =>
+    variant.available && variant.selections.some((selection) =>
+      selection.optionName === option.name && selection.value === value.label
+    ) && precedingOptions.every((precedingOption) =>
+      !selectedOptions.value[precedingOption.name] ||
+      variant.selections.some((selection) =>
+        selection.optionName === precedingOption.name &&
+        selection.value === selectedOptions.value[precedingOption.name]
+      )
+    )
+  )
+}
+
+const selectOption = (optionIndex, option, value) => {
+  if (!canSelectValue(optionIndex, option, value)) return
+
+  const nextOptions = { ...selectedOptions.value, [option.name]: value.label }
+  const compatibleVariant = variants.value.find((variant) =>
+    variant.available && variantOptions.value
+      .slice(0, optionIndex + 1)
+      .every((selectedOption) =>
+        variant.selections.some((selection) =>
+          selection.optionName === selectedOption.name &&
+          selection.value === nextOptions[selectedOption.name]
+        )
+      )
+  )
+  if (compatibleVariant) {
+    for (const selection of compatibleVariant.selections) {
+      nextOptions[selection.optionName] = selection.value
+    }
+  }
+  selectedOptions.value = nextOptions
+}
+
+const actionProduct = computed(() => {
+  if (!props.product) return null
+  if (!selectedVariant.value) return props.product
+
+  return {
+    ...props.product,
+    pricePerType: Number(selectedVariant.value.pricePerUnit),
+    maxQuantityPerOrder: selectedVariant.value.maxQuantityPerOrder == null
+      ? props.product.maxQuantityPerOrder
+      : Number(selectedVariant.value.maxQuantityPerOrder),
+    isSoldOut: !selectedVariant.value.available,
+    variantId: selectedVariant.value.id
+  }
+})
+
+const unitPriceLabel = computed(() => {
+  if (!props.product) return ''
+  if (props.product.productType === 'VARIANT') {
+    return selectedVariant.value
+      ? `${formatCurrency(Number(selectedVariant.value.pricePerUnit), props.product.currency)} / ${props.product.unitSymbol ?? 'u'}`
+      : 'Elegí las opciones para ver el precio'
+  }
+  return `${formatCurrency(props.product.pricePerType, props.product.currency)} / ${props.product.unitSymbol ?? 'u'}`
+})
 
 const fallbackIcon = computed(() => props.product?.imageFallback === 'pastry'
   ? 'pi pi-sparkles'
@@ -72,9 +152,44 @@ const fallbackIcon = computed(() => props.product?.imageFallback === 'pastry'
           <p v-else class="product-page-description product-page-description-empty">
             Este producto todavía no tiene descripción.
           </p>
+          <div v-if="product.productType === 'VARIANT'" class="product-variant-options">
+            <fieldset v-for="(option, optionIndex) in variantOptions" :key="option.name" class="product-variant-option">
+              <legend>{{ option.name }}</legend>
+              <div class="product-variant-values">
+                <button
+                  v-for="value in option.values"
+                  :key="value.label"
+                  type="button"
+                  class="product-variant-value"
+                  :class="{
+                    selected: selectedOptions[option.name] === value.label,
+                    'color-swatch': option.displayType === 'COLOR_SWATCH'
+                  }"
+                  :disabled="!canSelectValue(optionIndex, option, value)"
+                  :aria-pressed="selectedOptions[option.name] === value.label"
+                  @click="selectOption(optionIndex, option, value)"
+                >
+                  <span
+                    v-if="option.displayType === 'COLOR_SWATCH'"
+                    class="product-variant-swatch"
+                    :style="{ backgroundColor: /^#[0-9a-f]{6}$/i.test(value.swatchHex ?? '') ? value.swatchHex : '#e5e7eb' }"
+                    aria-hidden="true"
+                  ></span>
+                  {{ value.label }}
+                </button>
+              </div>
+            </fieldset>
+            <Message v-if="!variants.some((variant) => variant.available)" severity="warn" :closable="false">
+              No hay combinaciones disponibles por el momento.
+            </Message>
+            <p v-else-if="variantOptions.length && !selectedVariant" class="product-variant-hint" role="status">
+              Seleccioná una opción disponible de cada tipo.
+            </p>
+          </div>
           <ProductActions
+            v-if="product.productType !== 'VARIANT' || selectedVariant"
             class="product-page-actions"
-            :product="product"
+            :product="actionProduct"
             :quantity-label="quantityLabel"
             :store-closed="storeClosed"
             :busy="busy"
@@ -84,9 +199,9 @@ const fallbackIcon = computed(() => props.product?.imageFallback === 'pastry'
             :unavailable="unavailable"
             :decrease-disabled="decreaseDisabled"
             :increase-disabled="increaseDisabled"
-            @change-quantity="$emit('change-quantity', $event)"
-            @add-to-cart="$emit('add-to-cart')"
-            @remove-from-cart="$emit('remove-from-cart')"
+            @change-quantity="emit('change-quantity', { delta: $event, variantId: selectedVariant?.id ?? null })"
+            @add-to-cart="emit('add-to-cart', selectedVariant?.id ?? null)"
+            @remove-from-cart="emit('remove-from-cart', selectedVariant?.id ?? null)"
           />
           <p v-if="storeClosed" class="product-page-closed" role="status">
             La tienda se encuentra cerrada en este momento.
@@ -175,6 +290,67 @@ const fallbackIcon = computed(() => props.product?.imageFallback === 'pastry'
 
   .product-page-description-empty {
     opacity: 0.7;
+  }
+
+  .product-variant-options {
+    display: flex;
+    width: 100%;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .product-variant-option {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .product-variant-option legend {
+    margin-bottom: 0.5rem;
+    font-weight: 700;
+  }
+
+  .product-variant-values {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .product-variant-value {
+    display: inline-flex;
+    min-height: 2.5rem;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.75rem;
+    border: 1px solid color-mix(in srgb, var(--primary-on-background-color) 25%, transparent);
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .product-variant-value.selected {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 1px var(--primary-color);
+  }
+
+  .product-variant-value:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .product-variant-swatch {
+    width: 1rem;
+    height: 1rem;
+    border: 1px solid color-mix(in srgb, var(--primary-on-background-color) 25%, transparent);
+    border-radius: 50%;
+  }
+
+  .product-variant-hint {
+    margin: 0;
+    opacity: 0.75;
   }
 
   .product-page-actions {

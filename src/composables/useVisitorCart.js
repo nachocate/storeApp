@@ -20,24 +20,47 @@ export const useVisitorCart = ({ products }) => {
   })
   const cartError = ref('')
   const cartLoading = ref(false)
+  const cartInitializing = ref(false)
   const busyProductIds = ref([])
   const busyPromotionId = ref(null)
-  const isProductBusy = (productId) => busyProductIds.value.includes(productId)
   const productQty = ref({})
   const cartMutations = new Map()
   let cartDebounceTimer = null
   let cartSyncPromise = null
 
+  const cartLineKey = (productId, variantId = null) => `${productId}:${variantId ?? ''}`
+  const isProductBusy = (productId, variantId = null) =>
+    busyProductIds.value.includes(cartLineKey(productId, variantId))
+  const getProductVariant = (product, variantId) =>
+    product?.variantConfiguration?.variants?.find((variant) => variant.id === variantId) ?? null
+
   const cartItems = computed(() => cart.value
     .map((entry) => {
       const product = products.find((item) => item.id === entry.id)
-      return product ? { ...product, quantity: entry.quantity } : null
+      if (!product) return null
+      const variant = entry.variantId == null ? null : getProductVariant(product, entry.variantId)
+      return {
+        ...product,
+        id: product.id,
+        lineId: cartLineKey(product.id, entry.variantId),
+        variantId: entry.variantId ?? null,
+        variantLabel: entry.variantLabel ?? variant?.label ?? '',
+        pricePerType: variant
+          ? Number(variant.pricePerUnit)
+          : entry.unitPrice == null ? product.pricePerType : Number(entry.unitPrice),
+        maxQuantityPerOrder: variant
+          ? variant.maxQuantityPerOrder == null ? null : Number(variant.maxQuantityPerOrder)
+          : product.maxQuantityPerOrder,
+        isSoldOut: variant ? !variant.available : entry.variantId != null || product.isSoldOut,
+        quantity: entry.quantity
+      }
     })
     .filter(Boolean))
 
-  const totalItems = computed(() => cartItems.value.reduce((sum, item) =>
-    sum + (item.productType === 'weight' ? 1 : item.quantity), 0
-  , 0))
+  const totalItems = computed(() => cartItems.value.reduce(
+    (sum, item) => sum + (item.quantityType === 'weight' || item.decimalScale > 0 ? 1 : item.quantity),
+    0
+  ))
 
   const localSubtotal = computed(() => cartItems.value.reduce(
     (sum, item) => sum + item.pricePerType * item.quantity,
@@ -62,7 +85,11 @@ export const useVisitorCart = ({ products }) => {
       window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify({
         token: cartToken.value,
         revision: cartRevision.value,
-        items: cart.value.map(({ id, quantity }) => ({ id, quantity }))
+        items: cart.value.map(({ id, variantId, quantity }) => ({
+          id,
+          ...(variantId == null ? {} : { variantId }),
+          quantity
+        }))
       }))
     } catch {
       // Storage can be unavailable in private browsing contexts.
@@ -93,16 +120,24 @@ export const useVisitorCart = ({ products }) => {
 
       const items = savedCart.items.flatMap((entry) => {
         const product = products.find((item) => item.id === entry.id)
+        const variant = entry.variantId == null ? null : getProductVariant(product, entry.variantId)
         const quantity = Number(entry.quantity)
-        if (!product || !Number.isFinite(quantity) || quantity <= 0) return []
+        if (!product || (product.productType === 'VARIANT' && (!variant || !variant.available)) ||
+          (entry.variantId != null && !variant) ||
+          !Number.isFinite(quantity) || quantity <= 0) return []
 
         const limit = Math.min(
-          product.stock ?? Number.POSITIVE_INFINITY,
-          product.maxQuantityPerOrder ?? Number.POSITIVE_INFINITY
+          variant
+            ? variant.maxQuantityPerOrder ?? Number.POSITIVE_INFINITY
+            : product.maxQuantityPerOrder ?? Number.POSITIVE_INFINITY
         )
         if (limit < product.minQuantity) return []
 
-        return [{ id: product.id, quantity: Math.min(limit, Math.max(product.minQuantity, quantity)) }]
+        return [{
+          id: product.id,
+          ...(entry.variantId == null ? {} : { variantId: entry.variantId }),
+          quantity: Math.min(limit, Math.max(product.minQuantity, quantity))
+        }]
       })
 
       cartToken.value = savedCart.token
@@ -115,30 +150,36 @@ export const useVisitorCart = ({ products }) => {
     }
   }
 
-  const getProductLimit = (product) => Math.min(
-    product.stock ?? Number.POSITIVE_INFINITY,
-    product.maxQuantityPerOrder ?? Number.POSITIVE_INFINITY
+  const getProductLimit = (product, variantId = null) => Math.min(
+    variantId == null ? product.stock ?? Number.POSITIVE_INFINITY : Number.POSITIVE_INFINITY,
+    variantId == null
+      ? product.maxQuantityPerOrder ?? Number.POSITIVE_INFINITY
+      : getProductVariant(product, variantId)?.maxQuantityPerOrder ?? Number.POSITIVE_INFINITY
   )
 
-  const isUnavailable = (product) => product.isSoldOut || getProductLimit(product) <= 0
+  const isUnavailable = (product, variantId = null) => variantId == null
+    ? product.isSoldOut || getProductLimit(product) <= 0
+    : !getProductVariant(product, variantId)?.available || getProductLimit(product, variantId) <= 0
 
-  const getCartQuantity = (productId) =>
-    cart.value.find((item) => item.id === productId)?.quantity ?? 0
+  const getCartQuantity = (productId, variantId = null) =>
+    cart.value.find((item) => item.id === productId && (item.variantId ?? null) === variantId)?.quantity ?? 0
 
-  const getProductQuantity = (product) => {
-    const value = productQty.value[product.id]
+  const getProductQuantity = (product, variantId = null) => {
+    const key = cartLineKey(product.id, variantId)
+    const value = productQty.value[key]
     if (value !== undefined) return value
 
-    const cartQuantity = getCartQuantity(product.id)
+    const cartQuantity = getCartQuantity(product.id, variantId)
     const quantity = cartQuantity > 0 ? cartQuantity : product.quantity
-    productQty.value[product.id] = quantity
+    productQty.value[key] = quantity
     return quantity
   }
 
-  const isProductLimitReached = (product) =>
-    getProductQuantity(product) + product.step > getProductLimit(product)
+  const isProductLimitReached = (product, variantId = null) =>
+    getProductQuantity(product, variantId) + product.step > getProductLimit(product, variantId)
 
-  const formatQuantityLabel = (product) => formatQuantity(getProductQuantity(product), product)
+  const formatQuantityLabel = (product, variantId = null) =>
+    formatQuantity(getProductQuantity(product, variantId), product)
 
   const formatCartQuantity = (quantity, product) => formatQuantity(quantity, product)
 
@@ -178,14 +219,46 @@ export const useVisitorCart = ({ products }) => {
     updateCartTotals(payload)
 
     if (!Array.isArray(data.items)) return
-    cart.value = data.items.flatMap((entry) => {
+    const snapshotItems = data.items.flatMap((entry) => {
       const id = entry.productId ?? entry.product?.id ?? entry.id
+      const variantId = entry.variantId ?? entry.variant?.id ?? null
       const quantity = Number(entry.quantity)
       return id != null && Number.isFinite(quantity) && quantity > 0
-        ? [{ id, quantity }]
+        ? [{
+          id,
+          ...(variantId == null ? {} : {
+            variantId,
+            variantLabel: entry.variantLabel ?? entry.variant?.label ?? '',
+            ...(entry.unitPrice == null ? {} : { unitPrice: entry.unitPrice }),
+            ...(entry.name == null ? {} : { name: entry.name })
+          }),
+          quantity
+        }]
         : []
     })
-    for (const item of cart.value) productQty.value[item.id] = item.quantity
+    const lines = new Map(snapshotItems.map((item) => [cartLineKey(item.id, item.variantId), item]))
+    for (const mutation of cartMutations.values()) {
+      const key = cartLineKey(mutation.productId, mutation.variantId)
+      if (mutation.quantity == null || mutation.quantity <= 0) {
+        lines.delete(key)
+      } else {
+        const product = products.find((item) => item.id === mutation.productId)
+        const variant = mutation.variantId == null ? null : getProductVariant(product, mutation.variantId)
+        lines.set(key, {
+          id: mutation.productId,
+          ...(mutation.variantId == null ? {} : {
+            variantId: mutation.variantId,
+            variantLabel: variant?.label ?? '',
+            ...(variant?.pricePerUnit == null ? {} : { unitPrice: variant.pricePerUnit })
+          }),
+          quantity: mutation.quantity
+        })
+      }
+    }
+    cart.value = [...lines.values()]
+    for (const item of cart.value) {
+      productQty.value[cartLineKey(item.id, item.variantId)] = item.quantity
+    }
   }
 
   const ensureCart = async () => {
@@ -218,6 +291,7 @@ export const useVisitorCart = ({ products }) => {
   }
 
   const initializeCart = async () => {
+    cartInitializing.value = true
     cartLoading.value = true
     cartError.value = ''
     try {
@@ -240,12 +314,13 @@ export const useVisitorCart = ({ products }) => {
         cartError.value = error.message || 'No se pudo crear o recuperar el carrito.'
       }
     } finally {
+      cartInitializing.value = false
       cartLoading.value = false
       persistCart()
     }
   }
 
-  const sendCartMutation = async (productId, quantity) => {
+  const sendCartMutation = async (productId, variantId, quantity) => {
     if ((quantity === null || quantity <= 0) && !cartToken.value) return
     await ensureCart()
     if (cartRevision.value === null) await refreshCurrentCart()
@@ -256,8 +331,12 @@ export const useVisitorCart = ({ products }) => {
       method: removing ? 'DELETE' : 'PUT',
       cartToken: cartToken.value,
       body: removing
-        ? { revision: cartRevision.value }
-        : { quantity: Number(quantity).toFixed(3), revision: cartRevision.value }
+        ? { revision: cartRevision.value, ...(variantId == null ? {} : { variantId }) }
+        : {
+          quantity: Number(quantity).toFixed(3),
+          revision: cartRevision.value,
+          ...(variantId == null ? {} : { variantId })
+        }
     })
     const previousRevision = cartRevision.value
     if (response) applyCartSnapshot(response)
@@ -274,16 +353,20 @@ export const useVisitorCart = ({ products }) => {
 
     cartLoading.value = true
     cartError.value = ''
-    busyProductIds.value = [...cartMutations.keys()]
     cartSyncPromise = (async () => {
       try {
         while (cartMutations.size > 0) {
-          const [productId, quantity] = cartMutations.entries().next().value
-          cartMutations.delete(productId)
+          const [key, mutation] = cartMutations.entries().next().value
+          cartMutations.delete(key)
+          if (!busyProductIds.value.includes(key)) {
+            busyProductIds.value = [...busyProductIds.value, key]
+          }
           try {
-            await sendCartMutation(productId, quantity)
+            await sendCartMutation(mutation.productId, mutation.variantId, mutation.quantity)
           } finally {
-            busyProductIds.value = busyProductIds.value.filter((id) => id !== productId)
+            if (!cartMutations.has(key)) {
+              busyProductIds.value = busyProductIds.value.filter((id) => id !== key)
+            }
           }
         }
       } catch (error) {
@@ -306,50 +389,61 @@ export const useVisitorCart = ({ products }) => {
     return cartSyncPromise
   }
 
-  const queueCartRequest = (productId, quantity) => {
-    cartMutations.set(productId, quantity)
+  const queueCartRequest = (productId, variantId, quantity) => {
+    cartMutations.set(cartLineKey(productId, variantId), { productId, variantId, quantity })
     if (cartDebounceTimer) clearTimeout(cartDebounceTimer)
     cartDebounceTimer = setTimeout(() => void flushCartRequests(), 350)
   }
 
-  const updateProductQuantity = (product, delta) => {
-    if (isUnavailable(product) || cartLoading.value) return
+  const updateProductQuantity = (product, delta, variantId = null) => {
+    if (isUnavailable(product, variantId) || cartInitializing.value || busyPromotionId.value !== null) return
 
-    const current = getProductQuantity(product)
+    const current = getProductQuantity(product, variantId)
     const next = Math.min(
-      getProductLimit(product),
+      getProductLimit(product, variantId),
       Math.max(product.minQuantity, roundQuantity(current + delta, product.decimalScale))
     )
-    productQty.value[product.id] = next
 
-    const existing = cart.value.find((item) => item.id === product.id)
+    const existing = cart.value.find((item) =>
+      item.id === product.id && (item.variantId ?? null) === variantId
+    )
+    productQty.value[cartLineKey(product.id, variantId)] = next
     if (existing) {
       existing.quantity = next
-      queueCartRequest(product.id, next)
+      queueCartRequest(product.id, variantId, next)
     }
   }
 
-  const addToCart = (product) => {
-    if (isUnavailable(product) || cartLoading.value) return
+  const addToCart = (product, variantId = null) => {
+    if ((product.productType === 'VARIANT' && variantId == null) ||
+      isUnavailable(product, variantId) || cartInitializing.value || busyPromotionId.value !== null) return
 
-    const quantity = getProductQuantity(product)
-    const existing = cart.value.find((item) => item.id === product.id)
-    const nextQuantity = Math.min(getProductLimit(product), (existing?.quantity ?? 0) + quantity)
+    const lineKey = cartLineKey(product.id, variantId)
+    const quantity = getProductQuantity(product, variantId)
+    const existing = cart.value.find((item) =>
+      item.id === product.id && (item.variantId ?? null) === variantId
+    )
+    const nextQuantity = Math.min(getProductLimit(product, variantId), (existing?.quantity ?? 0) + quantity)
     if (nextQuantity <= (existing?.quantity ?? 0)) return
 
     if (existing) {
       existing.quantity = nextQuantity
     } else {
-      cart.value.push({ id: product.id, quantity: nextQuantity })
+      const variant = variantId == null ? null : getProductVariant(product, variantId)
+      cart.value.push({
+        id: product.id,
+        ...(variantId == null ? {} : { variantId, variantLabel: variant?.label ?? '' }),
+        quantity: nextQuantity
+      })
     }
-    productQty.value[product.id] = nextQuantity
-    queueCartRequest(product.id, nextQuantity)
+    productQty.value[lineKey] = nextQuantity
+    queueCartRequest(product.id, variantId, nextQuantity)
   }
 
-  const updateCart = (productId, delta) => {
+  const updateCart = (productId, delta, variantId = null) => {
     if (cartLoading.value) return
 
-    const item = cart.value.find((entry) => entry.id === productId)
+    const item = cart.value.find((entry) => entry.id === productId && (entry.variantId ?? null) === variantId)
     const product = products.find((entry) => entry.id === productId)
     if (!item || !product) return
 
@@ -357,25 +451,29 @@ export const useVisitorCart = ({ products }) => {
     if (nextQuantity === item.quantity) return
 
     if (nextQuantity < product.minQuantity) {
-      cart.value = cart.value.filter((entry) => entry.id !== productId)
-      productQty.value[productId] = product.quantity
-      queueCartRequest(productId, null)
+      cart.value = cart.value.filter((entry) =>
+        entry.id !== productId || (entry.variantId ?? null) !== variantId
+      )
+      productQty.value[cartLineKey(productId, variantId)] = product.quantity
+      queueCartRequest(productId, variantId, null)
       return
     }
 
-    item.quantity = Math.min(getProductLimit(product), nextQuantity)
-    productQty.value[productId] = item.quantity
-    queueCartRequest(productId, item.quantity)
+    item.quantity = Math.min(getProductLimit(product, variantId), nextQuantity)
+    productQty.value[cartLineKey(productId, variantId)] = item.quantity
+    queueCartRequest(productId, variantId, item.quantity)
   }
 
-  const removeItem = (productId) => {
+  const removeItem = (productId, variantId = null) => {
     if (cartLoading.value) return
     const product = products.find((entry) => entry.id === productId)
     if (!product) return
 
-    cart.value = cart.value.filter((entry) => entry.id !== productId)
-    productQty.value[productId] = product.minQuantity
-    queueCartRequest(productId, null)
+    cart.value = cart.value.filter((entry) =>
+      entry.id !== productId || (entry.variantId ?? null) !== variantId
+    )
+    productQty.value[cartLineKey(productId, variantId)] = product.minQuantity
+    queueCartRequest(productId, variantId, null)
   }
 
   const sendPromotionBundle = async (promotionId, action) => {
@@ -442,6 +540,7 @@ export const useVisitorCart = ({ products }) => {
     cart,
     cartError,
     cartItems,
+    cartInitializing,
     cartLoading,
     cartRevision,
     cartToken,

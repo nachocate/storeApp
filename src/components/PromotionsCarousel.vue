@@ -165,7 +165,6 @@ const showImage = (promotion) => promotion.image && !failedImages.value.includes
     overflow-x: auto;
     list-style: none;
     scroll-snap-type: x proximity;
-    scrollbar-width: thin;
   }
 
   .promotion-card {

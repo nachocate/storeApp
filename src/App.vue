@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import ProductCard from './components/ProductCard.vue'
 import ProductPage from './components/ProductPage.vue'
+import ScrollIndicators from './components/ScrollIndicators.vue'
 import PromotionsCarousel from './components/PromotionsCarousel.vue'
 import { setCatalogPrices } from './utils/formatCurrency.js'
 import { normalizePromotions } from './utils/normalizePromotion.js'
@@ -16,7 +17,7 @@ import { resolveStoreAssetUrl } from './utils/resolveStoreAssetUrl.js'
 import { readQuantityRules } from './utils/quantityRules.js'
 import { isValidEmail } from './utils/invoiceData.js'
 import { isStoreCurrentlyOpen, normalizeWeeklyHours } from './utils/storeHours.js'
-import { blendColors, getContrastColor, getReadableColor } from './utils/contrast.js'
+import { blendColors, getContrastColor, getReadableColor, LIGHT_TEXT_COLOR } from './utils/contrast.js'
 const isHome = IS_HOME
 const environmentMismatch = IS_ENVIRONMENT_MISMATCH
 const LOADING_PRIMARY_COLOR = '#9ca3af'
@@ -157,6 +158,7 @@ const storeThemeStyle = computed(() => {
     : branding.backgroundColor || storeInfo.branding.backgroundColor
   const toolsSurfaceColor = blendColors('#ffffff', backgroundColor, 0.8)
   const bannerBackgroundColor = blendColors(primaryColor, backgroundColor, 0.25)
+  const bannerTextColor = bannerImageUrl.value ? contrastColor : getContrastColor(bannerBackgroundColor)
 
   return {
     '--primary-color': primaryColor,
@@ -168,7 +170,10 @@ const storeThemeStyle = computed(() => {
     '--background-color': backgroundColor,
     '--banner-image': bannerImageUrl.value ? `url(${bannerImageUrl.value})` : 'none',
     '--banner-overlay': `color-mix(in srgb, ${primaryColor} 25%, transparent)`,
-    '--banner-text-color': bannerImageUrl.value ? contrastColor : getContrastColor(bannerBackgroundColor),
+    '--banner-text-color': bannerTextColor,
+    '--banner-text-shadow': bannerTextColor === LIGHT_TEXT_COLOR
+      ? '0 2px 8px rgb(0 0 0 / 95%), 0 0 20px rgb(0 0 0 / 70%)'
+      : '0 2px 8px rgb(255 255 255 / 95%), 0 0 20px rgb(255 255 255 / 75%)',
     '--p-primary-color': primaryColor,
     '--p-primary-hover-color': hoverColor,
     '--p-primary-active-color': activeColor,
@@ -272,6 +277,7 @@ const {
   busyPromotionId,
   cart,
   cartError,
+  cartInitializing,
   cartItems,
   cartLoading,
   cartRevision,
@@ -301,13 +307,13 @@ const {
   updateCart,
   updateProductQuantity: updateCartProductQuantity
 } = useVisitorCart({ products })
-const addToCart = (product) => {
+const addToCart = (product, variantId = null) => {
   if (storeIsOpen.value === false) return
-  addCartItem(product)
+  addCartItem(product, variantId)
 }
-const updateProductQty = (product, delta) => {
+const updateProductQty = (product, delta, variantId = null) => {
   if (storeIsOpen.value === false) return
-  updateCartProductQuantity(product, delta)
+  updateCartProductQuantity(product, delta, variantId)
 }
 
 // The promotions endpoint is optional: failures just hide the block.
@@ -349,7 +355,6 @@ watch(loadMoreSentinel, (sentinel) => {
 
 const normalizeApiProduct = (product) => {
   const { decimalScale, step, minQuantity, unitSymbol } = readQuantityRules(product)
-  const productType = decimalScale > 0 ? 'weight' : 'unit'
   const maxQuantityPerOrder = product.maxQuantityPerOrder == null
     ? null
     : Number(product.maxQuantityPerOrder)
@@ -362,6 +367,8 @@ const normalizeApiProduct = (product) => {
   return {
     id: product.id,
     name: product.name,
+    productType: product.productType ?? 'SIMPLE',
+    quantityType: decimalScale > 0 ? 'weight' : 'unit',
     description: product.description ?? '',
     image: images[0] ?? '',
     images,
@@ -376,6 +383,7 @@ const normalizeApiProduct = (product) => {
     maxQuantityPerOrder,
     isSoldOut: !product.available,
     isVisible: true,
+    variantConfiguration: product.variantConfiguration ?? null,
     step,
     minQuantity,
     decimalScale,
@@ -632,17 +640,22 @@ onBeforeUnmount(() => {
 
 const loadNextProducts = () => loadProducts({ append: true })
 
-const removeFromCart = (productId) => {
-  removeCartItem(productId)
+const removeFromCart = (productId, variantId = null) => {
+  removeCartItem(productId, variantId)
   pendingRemoval.value = null
   removeDialogVisible.value = false
 }
 
-const promptRemoveFromCart = (productId) => {
+const promptRemoveFromCart = (productId, variantId = null, variantLabel = '') => {
   const product = products.find((entry) => entry.id === productId)
   if (!product) return
 
-  pendingRemoval.value = product
+  const variant = product.variantConfiguration?.variants?.find((entry) => entry.id === variantId)
+  pendingRemoval.value = {
+    ...product,
+    variantId,
+    variantLabel: variantLabel || variant?.label || ''
+  }
   removeDialogVisible.value = true
 }
 
@@ -693,6 +706,15 @@ const openOrderTracking = (requestedOrderId = '') => {
 const PRODUCT_QUERY_PARAM = 'product'
 const readProductIdFromUrl = () => new URLSearchParams(window.location.search).get(PRODUCT_QUERY_PARAM) ?? ''
 const selectedProductId = ref(readProductIdFromUrl())
+const selectedVariantId = ref(null)
+watch(selectedProductId, () => {
+  selectedVariantId.value = null
+})
+watch(selectedProductId, (productId) => {
+  if (typeof document !== 'undefined') {
+    document.documentElement.classList.toggle('product-page-open', Boolean(productId))
+  }
+}, { immediate: true })
 const productPageLoading = ref(false)
 const productPageError = ref('')
 const selectedProduct = computed(() =>
@@ -723,6 +745,7 @@ const openProductPage = (product) => {
   url.searchParams.set(PRODUCT_QUERY_PARAM, String(product.id))
   window.history.pushState({ productPage: true }, '', url)
   productPageError.value = ''
+  selectedVariantId.value = null
   selectedProductId.value = String(product.id)
 }
 
@@ -745,7 +768,10 @@ const syncProductPageWithUrl = () => {
 }
 
 onMounted(() => window.addEventListener('popstate', syncProductPageWithUrl))
-onBeforeUnmount(() => window.removeEventListener('popstate', syncProductPageWithUrl))
+onBeforeUnmount(() => {
+  window.removeEventListener('popstate', syncProductPageWithUrl)
+  document.documentElement.classList.remove('product-page-open')
+})
 </script>
 
 <template>
@@ -1004,12 +1030,12 @@ onBeforeUnmount(() => window.removeEventListener('popstate', syncProductPageWith
           :quantity-label="formatQuantityLabel(product)"
           :store-closed="storeIsOpen === false"
           :busy="isProductBusy(product.id)"
-          :locked="cartLoading"
+          :locked="cartInitializing || busyPromotionId !== null"
           :in-cart="Boolean(cart.find((item) => item.id === product.id))"
           :decrease-removes-item="getCartQuantity(product.id) > 0 && getCartQuantity(product.id) <= product.minQuantity"
           :unavailable="isUnavailable(product)"
           :decrease-disabled="getProductQuantity(product) <= product.minQuantity && !getCartQuantity(product.id)"
-          :increase-disabled="isProductLimitReached(product) || cartLoading"
+          :increase-disabled="isProductLimitReached(product) || cartInitializing || busyPromotionId !== null"
           @change-quantity="updateProductQty(product, $event)"
           @add-to-cart="addToCart(product)"
           @remove-from-cart="promptRemoveFromCart(product.id)"
@@ -1027,20 +1053,21 @@ onBeforeUnmount(() => window.removeEventListener('popstate', syncProductPageWith
         :product="selectedProduct"
         :loading="productPageLoading || productsLoading"
         :error="productPageError"
-        :quantity-label="selectedProduct ? formatQuantityLabel(selectedProduct) : ''"
+        :quantity-label="selectedProduct ? formatQuantityLabel(selectedProduct, selectedVariantId) : ''"
         :store-closed="storeIsOpen === false"
-        :busy="selectedProduct ? isProductBusy(selectedProduct.id) : false"
-        :locked="cartLoading"
-        :in-cart="selectedProduct ? Boolean(cart.find((item) => item.id === selectedProduct.id)) : false"
-        :decrease-removes-item="selectedProduct ? getCartQuantity(selectedProduct.id) > 0 && getCartQuantity(selectedProduct.id) <= selectedProduct.minQuantity : false"
-        :unavailable="selectedProduct ? isUnavailable(selectedProduct) : false"
-        :decrease-disabled="selectedProduct ? getProductQuantity(selectedProduct) <= selectedProduct.minQuantity && !getCartQuantity(selectedProduct.id) : false"
-        :increase-disabled="selectedProduct ? isProductLimitReached(selectedProduct) || cartLoading : false"
+        :busy="selectedProduct ? isProductBusy(selectedProduct.id, selectedVariantId) : false"
+        :locked="cartInitializing || busyPromotionId !== null"
+        :in-cart="selectedProduct ? getCartQuantity(selectedProduct.id, selectedVariantId) > 0 : false"
+        :decrease-removes-item="selectedProduct ? getCartQuantity(selectedProduct.id, selectedVariantId) > 0 && getCartQuantity(selectedProduct.id, selectedVariantId) <= selectedProduct.minQuantity : false"
+        :unavailable="selectedProduct ? isUnavailable(selectedProduct, selectedVariantId) : false"
+        :decrease-disabled="selectedProduct ? getProductQuantity(selectedProduct, selectedVariantId) <= selectedProduct.minQuantity && !getCartQuantity(selectedProduct.id, selectedVariantId) : false"
+        :increase-disabled="selectedProduct ? isProductLimitReached(selectedProduct, selectedVariantId) || cartInitializing || busyPromotionId !== null : false"
         @back="closeProductPage"
         @retry="ensureSelectedProduct"
-        @change-quantity="updateProductQty(selectedProduct, $event)"
-        @add-to-cart="addToCart(selectedProduct)"
-        @remove-from-cart="promptRemoveFromCart(selectedProduct.id)"
+        @variant-change="selectedVariantId = $event?.id ?? null"
+        @change-quantity="updateProductQty(selectedProduct, $event.delta, $event.variantId)"
+        @add-to-cart="addToCart(selectedProduct, $event)"
+        @remove-from-cart="promptRemoveFromCart(selectedProduct.id, $event)"
       />
 
       <Dialog
@@ -1050,10 +1077,12 @@ onBeforeUnmount(() => window.removeEventListener('popstate', syncProductPageWith
         :style="{ width: 'min(92vw, 28rem)' }"
         @hide="cancelRemoval"
       >
-        <p v-if="pendingRemoval">¿Deseas quitar <strong>{{ pendingRemoval.name }}</strong> del carrito?</p>
+        <p v-if="pendingRemoval">
+          ¿Deseas quitar <strong>{{ pendingRemoval.name }}<template v-if="pendingRemoval.variantLabel"> — {{ pendingRemoval.variantLabel }}</template></strong> del carrito?
+        </p>
         <template #footer>
           <Button label="Cancelar" severity="secondary" text @click="cancelRemoval" />
-          <Button label="Eliminar" icon="pi pi-trash" severity="danger" @click="removeFromCart(pendingRemoval.id)" />
+          <Button label="Eliminar" icon="pi pi-trash" severity="danger" @click="removeFromCart(pendingRemoval.id, pendingRemoval.variantId)" />
         </template>
       </Dialog>
 
@@ -1093,6 +1122,7 @@ onBeforeUnmount(() => window.removeEventListener('popstate', syncProductPageWith
         class="cart-drawer"
         :style="storeThemeStyle"
         :modal="true"
+        :block-scroll="true"
         :dismissable="!cartLoading"
         :show-close-icon="false"
       >
@@ -1123,10 +1153,11 @@ onBeforeUnmount(() => window.removeEventListener('popstate', syncProductPageWith
         </Message>
 
         <div v-if="cartToken && !cartError" class="cart-items">
-          <article v-for="item in cartItems" :key="item.id" class="cart-item">
+          <article v-for="item in cartItems" :key="item.lineId" class="cart-item">
             <div class="cart-item-body">
               <div class="cart-item-header">
                 <h4>{{ item.name }}</h4>
+                <small v-if="item.variantLabel">{{ item.variantLabel }}</small>
                 <strong>{{ formatCartAmount(item.pricePerType * item.quantity) }}</strong>
               </div>
               <div class="cart-item-controls">
@@ -1137,10 +1168,10 @@ onBeforeUnmount(() => window.removeEventListener('popstate', syncProductPageWith
                   rounded
                   :disabled="cartLoading"
                   :aria-label="item.quantity <= item.minQuantity ? `Eliminar ${item.name} del carrito` : `Disminuir cantidad de ${item.name}`"
-                  @click="item.quantity <= item.minQuantity ? promptRemoveFromCart(item.id) : updateCart(item.id, -1)"
+                  @click="item.quantity <= item.minQuantity ? promptRemoveFromCart(item.id, item.variantId, item.variantLabel) : updateCart(item.id, -1, item.variantId)"
                 />
                 <span>{{ formatCartQuantity(item.quantity, item) }}</span>
-                <Button type="button" icon="pi pi-plus" text rounded :disabled="cartLoading || item.quantity + item.step > getProductLimit(item)" :aria-label="`Aumentar cantidad de ${item.name}`" @click="updateCart(item.id, 1)" />
+                <Button type="button" icon="pi pi-plus" text rounded :disabled="cartLoading || item.isSoldOut || item.quantity + item.step > getProductLimit(item, item.variantId)" :aria-label="`Aumentar cantidad de ${item.name}`" @click="updateCart(item.id, 1, item.variantId)" />
               </div>
             </div>
           </article>
@@ -1173,11 +1204,16 @@ onBeforeUnmount(() => window.removeEventListener('popstate', syncProductPageWith
         </div>
       </Drawer>
       </template>
+      <ScrollIndicators />
     </main>
   </body>
 </template>
 
 <style scoped>
+  :global(html.product-page-open) {
+    overflow: hidden;
+  }
+
   :global(html),
   :global(body) {
     background-color: var(--store-background-color, #f6f5ef);
@@ -1242,6 +1278,11 @@ onBeforeUnmount(() => window.removeEventListener('popstate', syncProductPageWith
     background-position: center;
     min-height: 25vh;
     color: var(--banner-text-color);
+  }
+
+  #banner .identity h1,
+  #banner .store-slogan {
+    text-shadow: var(--banner-text-shadow);
   }
 
   .delivery-badge {
@@ -1735,7 +1776,7 @@ onBeforeUnmount(() => window.removeEventListener('popstate', syncProductPageWith
   .cart-fab,
   .orders-fab {
     position: fixed;
-    right: calc(max(var(--content-gutter), (100vw - var(--content-max-width)) / 2) + 0.5rem);
+    right: calc(max(var(--content-gutter), (100vw - var(--content-max-width)) / 2) + 0.5rem + var(--p-scrollbar-width, 0px));
     top: 1.5rem;
     z-index: 30;
     display: flex;
@@ -1871,9 +1912,9 @@ onBeforeUnmount(() => window.removeEventListener('popstate', syncProductPageWith
 
   .cart-item-header {
     display: flex;
-    justify-content: space-between;
+    flex-direction: column;
     gap: 0.6rem;
-    align-items: start;
+    align-items: stretch;
   }
 
   .cart-item-header h4 {
@@ -1883,8 +1924,10 @@ onBeforeUnmount(() => window.removeEventListener('popstate', syncProductPageWith
   }
 
   .cart-item-header strong {
+    align-self: flex-end;
     font-size: 0.85rem;
     color: #111827;
+    text-align: right;
   }
 
   .cart-item-controls {
@@ -1981,19 +2024,19 @@ onBeforeUnmount(() => window.removeEventListener('popstate', syncProductPageWith
 
   @media (max-width: 768px) {
     .cart-fab {
-      right: 1rem;
+      right: calc(1rem + var(--p-scrollbar-width, 0px));
       bottom: 1rem;
       top: auto;
     }
 
     .orders-fab {
-      right: 1rem;
+      right: calc(1rem + var(--p-scrollbar-width, 0px));
       bottom: 1rem;
       top: auto;
     }
 
     .cart-fab.cart-fab-with-orders {
-      right: 6.25rem;
+      right: calc(6.25rem + var(--p-scrollbar-width, 0px));
     }
 
     .delivery-badge {

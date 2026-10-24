@@ -154,7 +154,7 @@ const confirmedMercadoPagoPayment = computed(() => {
 })
 
 const itemCount = computed(() => props.items.reduce((count, item) =>
-  count + (item.productType === 'weight' ? 1 : item.quantity), 0
+  count + (item.quantityType === 'weight' || item.decimalScale > 0 ? 1 : item.quantity), 0
 , 0))
 
 const enabledFulfillments = computed(() => (checkoutOptions.value?.fulfillmentOptions ?? [])
@@ -819,9 +819,10 @@ onMounted(() => {
           <template #title>Resumen del pedido</template>
           <template #content>
           <ul class="summary-items">
-            <li v-for="item in items" :key="item.id">
+            <li v-for="item in items" :key="item.lineId ?? item.id">
               <div class="summary-item-copy">
                 <strong>{{ item.name }}</strong>
+                <small v-if="item.variantLabel">{{ item.variantLabel }}</small>
                 <span>{{ formatQuantity(item) }}</span>
               </div>
               <strong>{{ formatMoney(item.pricePerType * item.quantity) }}</strong>
