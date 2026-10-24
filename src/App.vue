@@ -1240,7 +1240,6 @@ onBeforeUnmount(() => window.removeEventListener('popstate', syncProductPageWith
     background-repeat: no-repeat;
     background-size: cover;
     background-position: center;
-    background-attachment: fixed;
     min-height: 25vh;
     color: var(--banner-text-color);
   }
