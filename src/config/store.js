@@ -94,11 +94,17 @@ export const IS_HOME = !requestedSlug
 export const buildStorePath = (slug, pathBased = usesPathSlug) =>
   pathBased ? `/${encodeURIComponent(slug)}` : '/'
 
-export const resolveRequestedOrderId = (pathname = '', search = '', pathBased = true) => {
+export const buildOrderTrackingPath = (publicOrderId, slug = STORE_SLUG, pathBased = usesPathSlug) => {
+  const storePath = buildStorePath(slug, pathBased).replace(/\/$/, '')
+  return `${storePath}/orders/${encodeURIComponent(publicOrderId)}`
+}
+
+export const resolveRequestedPublicOrderId = (pathname = '', search = '', pathBased = true) => {
   const segments = pathname.split('/').filter(Boolean)
   const ordersIndex = pathBased ? 1 : 0
   const pathOrderId = segments[ordersIndex] === 'orders' ? segments[ordersIndex + 1] : ''
-  const queryOrderId = new URLSearchParams(search).get('orderId')
+  const queryOrderId = new URLSearchParams(search).get('publicOrderId') ??
+    new URLSearchParams(search).get('orderId')
   if (queryOrderId) return queryOrderId.trim()
   if (!pathOrderId) return ''
 
@@ -109,11 +115,14 @@ export const resolveRequestedOrderId = (pathname = '', search = '', pathBased = 
   }
 }
 
-export const REQUESTED_ORDER_ID = resolveRequestedOrderId(
+export const resolveRequestedOrderId = resolveRequestedPublicOrderId
+
+export const REQUESTED_PUBLIC_ORDER_ID = resolveRequestedPublicOrderId(
   globalThis.window?.location.pathname ?? '',
   globalThis.window?.location.search ?? '',
   usesPathSlug
 )
+export const REQUESTED_ORDER_ID = REQUESTED_PUBLIC_ORDER_ID
 
 if (requestedSlug || foreignSubdomain) {
 	try {

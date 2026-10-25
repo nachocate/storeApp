@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { requestStoreApi } from '../api/store.js'
-import { buildStorePath, STORE_SLUG } from '../config/store.js'
+import { buildOrderTrackingPath, STORE_SLUG } from '../config/store.js'
 import { useOrderTracking } from '../composables/useOrderTracking.js'
 import { canUploadTransferProof } from '../utils/canUploadTransferProof.js'
 import { formatCurrency } from '../utils/formatCurrency.js'
@@ -25,7 +25,7 @@ import {
   resolveMercadoPagoCheckoutUrl
 } from '../utils/mercadoPagoCheckout.js'
 import { normalizeCheckoutOrder } from '../utils/normalizeCheckoutOrder.js'
-import { rememberMercadoPagoReturn } from '../utils/mercadoPagoReturn.js'
+import { rememberMercadoPagoReturnPublicOrderId } from '../utils/mercadoPagoReturn.js'
 import { readOrderItems, snapshotOrderItems } from '../utils/orderItems.js'
 
 const props = defineProps({
@@ -42,8 +42,8 @@ const props = defineProps({
   refreshCart: { type: Function, required: true },
   orders: { type: Array, default: () => [] },
   trackedOrderId: { type: [String, Number], default: null },
-  requestedOrderId: { type: String, default: '' },
-  loadOrderById: { type: Function, default: async () => 'unavailable' },
+  requestedPublicOrderId: { type: String, default: '' },
+  loadOrderByPublicId: { type: Function, default: async () => 'unavailable' },
   cancelOrder: { type: Function, required: true },
   changePaymentMethod: { type: Function, required: true },
   removeOrder: { type: Function, required: true },
@@ -57,8 +57,8 @@ const props = defineProps({
 
 const emit = defineEmits(['back', 'complete'])
 
-const trackingOnly = props.trackedOrderId !== null || Boolean(props.requestedOrderId)
-const activeOrderId = ref(props.trackedOrderId ?? props.requestedOrderId ?? null)
+const trackingOnly = props.trackedOrderId !== null || Boolean(props.requestedPublicOrderId)
+const activeOrderId = ref(props.trackedOrderId ?? props.requestedPublicOrderId ?? null)
 const trackedOrder = computed(() => props.orders.find((order) =>
   String(order.orderId) === String(activeOrderId.value)))
 const trackedOrderItems = computed(() => readOrderItems(trackedOrder.value))
@@ -66,7 +66,6 @@ const trackedOrderStatus = computed(() => String(trackedOrder.value?.orderStatus
 const canDeleteTrackedOrder = computed(() =>
   !trackedOrder.value?.shared && ['CANCELLED', 'CANCELED'].includes(trackedOrderStatus.value))
 const canCancelTrackedOrder = computed(() =>
-  !trackedOrder.value?.shared &&
   trackedOrder.value?.canCancelOrder === true &&
   ['PENDING', 'PENDING_AVAILABILITY', 'PENDING_PAYMENT', 'AWAITING_PAYMENT',
     'AWAITING_PAYMENT_PROOF', 'PAYMENT_PROOF_UNDER_REVIEW', 'PAYMENT_UNDER_REVIEW',
@@ -80,7 +79,6 @@ const paymentChangeOptions = computed(() =>
     option.provider !== trackedOrder.value?.paymentProvider &&
     !blockedPaymentProviders.value.has(option.provider)))
 const canChangeTrackedPaymentMethod = computed(() =>
-  !trackedOrder.value?.shared &&
   trackedOrder.value?.canChangePaymentMethod === true &&
   paymentChangeOptions.value.length > 0)
 const confirmingOrderDeletion = ref(false)
@@ -100,12 +98,17 @@ const trackingLinkCopied = ref(false)
 const trackingLinkError = ref('')
 let trackingLinkResetTimer = null
 const trackingLink = computed(() => {
-  if (!trackedOrder.value || typeof window === 'undefined') return ''
+  if (
+    !trackedOrder.value?.publicOrderId ||
+    !trackedOrder.value?.orderTrackingToken ||
+    typeof window === 'undefined'
+  ) return ''
   const url = new URL(window.location.href)
-  url.pathname = buildStorePath(STORE_SLUG)
+  url.pathname = buildOrderTrackingPath(trackedOrder.value.publicOrderId, STORE_SLUG)
   url.search = ''
-  url.searchParams.set('orderId', String(trackedOrder.value.orderId))
-  url.hash = ''
+  url.hash = new URLSearchParams({
+    trackingToken: trackedOrder.value.orderTrackingToken
+  }).toString()
   return url.toString()
 })
 const copyTrackingLink = async () => {
@@ -127,10 +130,10 @@ const copyTrackingLink = async () => {
   }
 }
 const retrySharedOrderLoad = async () => {
-  const result = await props.loadOrderById(props.requestedOrderId)
+  const result = await props.loadOrderByPublicId(props.requestedPublicOrderId)
   if (result !== 'ok') return
   const order = props.orders.find((item) =>
-    String(item.orderId) === String(props.requestedOrderId))
+    item.publicOrderId === props.requestedPublicOrderId)
   if (!order) return
   activeOrderId.value = null
   await nextTick()
@@ -529,7 +532,7 @@ watch(() => form.fulfillmentDate, (date) => {
 const redirectToMercadoPago = () => {
   if (!mercadoPagoCheckoutUrl.value || paymentRedirectStarted) return
   paymentRedirectStarted = true
-  rememberMercadoPagoReturn(STORE_SLUG, savedOrder.value?.orderId)
+  rememberMercadoPagoReturnPublicOrderId(STORE_SLUG, savedOrder.value?.publicOrderId)
   window.location.assign(mercadoPagoCheckoutUrl.value)
 }
 
@@ -779,7 +782,7 @@ onMounted(() => {
       </Message>
 
       <Message
-        v-else-if="requestedOrderId && orderErrors[requestedOrderId]"
+        v-else-if="requestedPublicOrderId && orderErrors[requestedPublicOrderId]"
         severity="error"
         :closable="false"
         class="tracking-message"
@@ -789,8 +792,8 @@ onMounted(() => {
       </Message>
 
       <Message v-else-if="trackingUnavailable || (!trackedOrder && !orderSaveWarning)" severity="info" :closable="false" class="tracking-message">
-        {{ requestedOrderId
-          ? 'No encontramos un pedido con ese número. Verificá que el enlace sea correcto.'
+        {{ requestedPublicOrderId
+          ? 'No pudimos validar el enlace de seguimiento. Abrí el enlace desde el email de la tienda o contactá al comercio.'
           : 'No pudimos acceder al pedido guardado. Si necesitás ayuda, contactá al comercio.' }}
       </Message>
 
@@ -814,87 +817,155 @@ onMounted(() => {
             {{ formatOrderStatus(trackedOrder.orderStatus) }}
           </span>
         </div>
-        <div class="tracked-order-sharing">
-          <Button
-            :label="trackingLinkCopied ? 'Link copiado' : 'Compartir pedido'"
-            :icon="trackingLinkCopied ? 'pi pi-check' : 'pi pi-copy'"
-            severity="secondary"
-            outlined
-            @click="copyTrackingLink"
-          />
+        <section class="tracked-order-actions" aria-labelledby="tracked-order-actions-title">
+          <h2 id="tracked-order-actions-title">Acciones del pedido</h2>
           <Message
-            v-if="trackingLinkError"
-            severity="error"
+            v-if="paymentChangeMessage"
+            :severity="paymentChangeMessageSeverity"
             :closable="false"
+            class="payment-change-message"
             role="status"
           >
-            {{ trackingLinkError }}
+            {{ paymentChangeMessage }}
           </Message>
-        </div>
-        <div v-if="canDeleteTrackedOrder" class="tracked-order-delete">
-          <Button
-            v-if="!confirmingOrderDeletion"
-            label="Eliminar pedido"
-            icon="pi pi-trash"
-            severity="danger"
-            text
-            @click="confirmingOrderDeletion = true"
-          />
-          <div v-else class="tracked-order-delete-confirmation" role="group" :aria-label="`Confirmar eliminación del pedido ${trackedOrder.orderId}`">
-            <p>¿Eliminar el pedido #{{ trackedOrder.orderId }} de este navegador?</p>
-            <Button label="Sí, eliminar" icon="pi pi-trash" severity="danger" @click="deleteTrackedOrder" />
-            <Button label="Conservar pedido" severity="secondary" outlined @click="confirmingOrderDeletion = false" />
-          </div>
-        </div>
-        <div v-if="canCancelTrackedOrder" class="tracked-order-cancellation">
-          <Button
-            v-if="!confirmingOrderCancellation"
-            label="Cancelar pedido"
-            icon="pi pi-times"
-            severity="danger"
-            outlined
-            @click="confirmingOrderCancellation = true"
-          />
-          <div v-else class="tracked-order-cancellation-confirmation">
-            <p>¿Querés cancelar el pedido #{{ trackedOrder.orderId }}?</p>
-            <label class="cancellation-reason-label">
-              Motivo (opcional)
-              <textarea
-                v-model="cancellationReason"
-                maxlength="255"
-                rows="2"
-                aria-label="Motivo opcional de cancelación"
-                :disabled="cancellingOrder"
-              ></textarea>
-            </label>
-            <div class="cancellation-actions">
+          <div class="tracked-order-action-grid">
+            <div v-if="canChangeTrackedPaymentMethod" class="tracked-order-action payment-method-change">
+              <h3>Medio de pago</h3>
+              <p>
+                Medio actual:
+                <strong>{{ describePaymentProvider(trackedOrder.paymentProvider).label }}</strong>
+              </p>
               <Button
-                label="Confirmar cancelación"
-                icon="pi pi-times"
-                severity="danger"
-                :loading="cancellingOrder"
-                :disabled="cancellingOrder"
-                @click="cancelTrackedOrder"
-              />
-              <Button
-                label="Volver"
+                label="Cambiar medio de pago"
+                icon="pi pi-wallet"
                 severity="secondary"
-                text
-                :disabled="cancellingOrder"
-                @click="confirmingOrderCancellation = false"
+                outlined
+                @click="openPaymentChangeDialog"
               />
             </div>
+
+            <div
+              v-if="trackedOrder.orderTrackingToken && canUploadTransferProof(trackedOrder)"
+              class="tracked-order-action proof-region"
+            >
+              <h3>Comprobante de transferencia</h3>
+              <p v-if="trackedOrder.transferAlias">
+                Transferí a <strong>{{ trackedOrder.transferAlias }}</strong>
+                <template v-if="trackedOrder.transferAccountHolder">, titular <strong>{{ trackedOrder.transferAccountHolder }}</strong></template>.
+              </p>
+              <label class="proof-input-label">
+                <i class="pi pi-upload" aria-hidden="true"></i>
+                <span>{{ uploadingProofs[trackedOrder.orderId] ? 'Enviando comprobante...' : 'Adjuntar comprobante' }}</span>
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  :disabled="uploadingProofs[trackedOrder.orderId]"
+                  :aria-label="`Adjuntar comprobante para el pedido ${trackedOrder.orderId}`"
+                  @change="handleProof(trackedOrder, $event)"
+                >
+              </label>
+              <Message v-if="transferSuccess[trackedOrder.orderId]" severity="success" :closable="false">
+                {{ transferSuccess[trackedOrder.orderId] }}
+              </Message>
+              <Message v-if="transferErrors[trackedOrder.orderId]" severity="error" :closable="false">
+                {{ transferErrors[trackedOrder.orderId] }}
+              </Message>
+              <small>JPEG, PNG o WebP, hasta 5 MiB.</small>
+            </div>
+
+            <div v-if="canCancelTrackedOrder" class="tracked-order-action tracked-order-cancellation">
+              <h3>Cancelación</h3>
+              <Button
+                v-if="!confirmingOrderCancellation"
+                label="Cancelar pedido"
+                icon="pi pi-times"
+                severity="danger"
+                outlined
+                @click="confirmingOrderCancellation = true"
+              />
+              <div v-else class="tracked-order-cancellation-confirmation">
+                <p>¿Querés cancelar el pedido #{{ trackedOrder.orderId }}?</p>
+                <label class="cancellation-reason-label">
+                  Motivo (opcional)
+                  <textarea
+                    v-model="cancellationReason"
+                    maxlength="255"
+                    rows="2"
+                    aria-label="Motivo opcional de cancelación"
+                    :disabled="cancellingOrder"
+                  ></textarea>
+                </label>
+                <div class="cancellation-actions">
+                  <Button
+                    label="Confirmar cancelación"
+                    icon="pi pi-times"
+                    severity="danger"
+                    :loading="cancellingOrder"
+                    :disabled="cancellingOrder"
+                    @click="cancelTrackedOrder"
+                  />
+                  <Button
+                    label="Volver"
+                    severity="secondary"
+                    text
+                    :disabled="cancellingOrder"
+                    @click="confirmingOrderCancellation = false"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div v-if="canDeleteTrackedOrder" class="tracked-order-action tracked-order-delete">
+              <h3>Seguimiento local</h3>
+              <p>Quitar este pedido de la lista guardada en este dispositivo.</p>
+              <Button
+                v-if="!confirmingOrderDeletion"
+                label="Eliminar pedido"
+                icon="pi pi-trash"
+                severity="danger"
+                text
+                @click="confirmingOrderDeletion = true"
+              />
+              <div v-else class="tracked-order-delete-confirmation" role="group" :aria-label="`Confirmar eliminación del pedido ${trackedOrder.orderId}`">
+                <p>¿Eliminar el pedido #{{ trackedOrder.orderId }} de este navegador?</p>
+                <Button label="Sí, eliminar" icon="pi pi-trash" severity="danger" @click="deleteTrackedOrder" />
+                <Button label="Conservar pedido" severity="secondary" outlined @click="confirmingOrderDeletion = false" />
+              </div>
+            </div>
+
+            <div
+              v-if="trackedOrder.publicOrderId && trackedOrder.orderTrackingToken"
+              class="tracked-order-action"
+            >
+              <h3>Compartir</h3>
+              <p>Compartí el estado y el detalle de este pedido.</p>
+              <Button
+                :label="trackingLinkCopied ? 'Link copiado' : 'Compartir pedido'"
+                :icon="trackingLinkCopied ? 'pi pi-check' : 'pi pi-copy'"
+                severity="secondary"
+                outlined
+                @click="copyTrackingLink"
+              />
+              <Message
+                v-if="trackingLinkError"
+                severity="error"
+                :closable="false"
+                role="status"
+              >
+                {{ trackingLinkError }}
+              </Message>
+            </div>
           </div>
-        </div>
-        <Message
-          v-if="cancellationMessage"
-          :severity="cancellationMessageSeverity"
-          :closable="false"
-          class="cancellation-message"
-          role="status"
-        >
-          {{ cancellationMessage }}
-        </Message>
+          <Message
+            v-if="cancellationMessage"
+            :severity="cancellationMessageSeverity"
+            :closable="false"
+            class="cancellation-message"
+            role="status"
+          >
+            {{ cancellationMessage }}
+          </Message>
+        </section>
         <OrderStatusTimeline
           :status="trackedOrder.orderStatus"
           :timeline="trackedOrder.statusTimeline"
@@ -917,63 +988,47 @@ onMounted(() => {
           Pago confirmado. Tu pedido fue recibido.
         </Message>
 
-        <dl class="tracked-order-details">
-          <div>
-            <dt>Modalidad</dt>
-            <dd>{{ trackedOrder.fulfillmentType === 'PICKUP' ? 'Retiro en tienda' : 'Envío a domicilio' }}</dd>
-          </div>
-          <div>
-            <dt>Entrega</dt>
-            <dd>{{ formatDate(trackedOrder.scheduledDate) }}<template v-if="trackedOrder.scheduledStartsAt">, {{ trackedOrder.scheduledStartsAt }} a {{ trackedOrder.scheduledEndsAt }}</template></dd>
-          </div>
-          <div>
-            <dt>Total</dt>
-            <dd>{{ formatMoney(trackedOrder.totalAmount, trackedOrder.currency) }}</dd>
-          </div>
-          <div>
-            <dt>Pago</dt>
-            <dd>{{ describePaymentProvider(trackedOrder.paymentProvider).label }}</dd>
-          </div>
-        </dl>
+        <section class="tracked-order-information" aria-label="Información del pedido">
+          <dl class="tracked-order-details">
+            <div>
+              <dt>Modalidad</dt>
+              <dd>{{ trackedOrder.fulfillmentType === 'PICKUP' ? 'Retiro en tienda' : 'Envío a domicilio' }}</dd>
+            </div>
+            <div>
+              <dt>Entrega</dt>
+              <dd>{{ formatDate(trackedOrder.scheduledDate) }}<template v-if="trackedOrder.scheduledStartsAt">, {{ trackedOrder.scheduledStartsAt }} a {{ trackedOrder.scheduledEndsAt }}</template></dd>
+            </div>
+            <div>
+              <dt>Total</dt>
+              <dd>{{ formatMoney(trackedOrder.totalAmount, trackedOrder.currency) }}</dd>
+            </div>
+            <div>
+              <dt>Pago</dt>
+              <dd>{{ describePaymentProvider(trackedOrder.paymentProvider).label }}</dd>
+            </div>
+          </dl>
 
-        <section class="tracked-order-items" aria-labelledby="tracked-order-items-title">
-          <h2 id="tracked-order-items-title">Productos del pedido</h2>
-          <ul v-if="trackedOrderItems.length">
-            <li v-for="(item, index) in trackedOrderItems" :key="`${item.name}-${item.variantLabel}-${index}`">
-              <div>
-                <strong>{{ item.name }}</strong>
-                <small v-if="item.variantLabel">{{ item.variantLabel }}</small>
-              </div>
-              <span>{{ formatQuantityWithUnit(item.quantity, item) }}</span>
-            </li>
-          </ul>
-          <p v-else class="tracked-order-items-empty">
-            El detalle de productos no está disponible para este pedido.
-          </p>
+          <section class="tracked-order-items" aria-labelledby="tracked-order-items-title">
+            <h2 id="tracked-order-items-title">Productos del pedido</h2>
+            <ul v-if="trackedOrderItems.length">
+              <li v-for="(item, index) in trackedOrderItems" :key="`${item.name}-${item.variantLabel}-${index}`">
+                <div>
+                  <strong>{{ item.name }}</strong>
+                  <small v-if="item.variantLabel">{{ item.variantLabel }}</small>
+                </div>
+                <span>{{ formatQuantityWithUnit(item.quantity, item) }}</span>
+              </li>
+            </ul>
+            <p v-else class="tracked-order-items-empty">
+              El detalle de productos no está disponible para este pedido.
+            </p>
+          </section>
         </section>
 
-        <div v-if="canChangeTrackedPaymentMethod" class="payment-method-change">
-          <p>
-            Medio de pago actual:
-            <strong>{{ describePaymentProvider(trackedOrder.paymentProvider).label }}</strong>
-          </p>
-          <Button
-            label="Cambiar medio de pago"
-            icon="pi pi-wallet"
-            severity="secondary"
-            outlined
-            @click="openPaymentChangeDialog"
-          />
-        </div>
-        <Message
-          v-if="paymentChangeMessage"
-          :severity="paymentChangeMessageSeverity"
-          :closable="false"
-          class="payment-change-message"
-          role="status"
-        >
-          {{ paymentChangeMessage }}
+        <Message v-if="orderErrors[trackedOrder.orderId]" severity="error" :closable="false">
+          {{ orderErrors[trackedOrder.orderId] }}
         </Message>
+
         <Dialog
           v-model:visible="paymentChangeDialogVisible"
           modal
@@ -1032,34 +1087,6 @@ onMounted(() => {
           </div>
         </Dialog>
 
-        <Message v-if="orderErrors[trackedOrder.orderId]" severity="error" :closable="false">
-          {{ orderErrors[trackedOrder.orderId] }}
-        </Message>
-
-        <div v-if="trackedOrder.orderTrackingToken && canUploadTransferProof(trackedOrder)" class="proof-region">
-          <p v-if="trackedOrder.transferAlias">
-            Transferí a <strong>{{ trackedOrder.transferAlias }}</strong>
-            <template v-if="trackedOrder.transferAccountHolder">, titular <strong>{{ trackedOrder.transferAccountHolder }}</strong></template>.
-          </p>
-          <label class="proof-input-label">
-            <i class="pi pi-upload" aria-hidden="true"></i>
-            <span>{{ uploadingProofs[trackedOrder.orderId] ? 'Enviando comprobante...' : 'Adjuntar comprobante' }}</span>
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              :disabled="uploadingProofs[trackedOrder.orderId]"
-              :aria-label="`Adjuntar comprobante para el pedido ${trackedOrder.orderId}`"
-              @change="handleProof(trackedOrder, $event)"
-            >
-          </label>
-          <Message v-if="transferSuccess[trackedOrder.orderId]" severity="success" :closable="false">
-            {{ transferSuccess[trackedOrder.orderId] }}
-          </Message>
-          <Message v-if="transferErrors[trackedOrder.orderId]" severity="error" :closable="false">
-            {{ transferErrors[trackedOrder.orderId] }}
-          </Message>
-          <small>JPEG, PNG o WebP, hasta 5 MiB.</small>
-        </div>
       </article>
     </section>
 
@@ -1774,35 +1801,69 @@ onMounted(() => {
   gap: 1rem;
 }
 
-.tracked-order-sharing {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.6rem;
+.tracked-order-information {
+  display: grid;
+  gap: 1.25rem;
+  padding: 1rem;
+  border: 1px solid rgba(24, 37, 28, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.62);
 }
 
-.tracked-order-delete {
-  display: flex;
-  justify-content: flex-end;
+.tracked-order-actions {
+  display: grid;
+  gap: 0.9rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid rgba(24, 37, 28, 0.12);
+}
+
+.tracked-order-actions > h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.tracked-order-action-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 0.75rem;
+}
+
+.tracked-order-action {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: 0.65rem;
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid rgba(24, 37, 28, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.tracked-order-action h3 {
+  margin: 0;
+  font-size: 0.94rem;
+}
+
+.tracked-order-action > p {
+  margin: 0;
+  color: #526157;
+  font-size: 0.88rem;
+  line-height: 1.45;
 }
 
 .tracked-order-delete-confirmation {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 0.5rem;
 }
 
 .tracked-order-delete-confirmation p {
   flex: 1 1 100%;
   margin: 0;
-  text-align: right;
-}
-
-.tracked-order-cancellation {
-  display: flex;
-  justify-content: flex-end;
+  text-align: left;
 }
 
 .tracked-order-cancellation-confirmation {
@@ -1840,20 +1901,12 @@ onMounted(() => {
 .cancellation-actions {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 0.5rem;
 }
 
 .cancellation-message {
   margin: 0;
-}
-
-.payment-method-change {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
 }
 
 .payment-method-change p,

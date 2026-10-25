@@ -3,7 +3,7 @@ import { normalizeCheckoutOrder } from './normalizeCheckoutOrder.js'
 
 describe('normalizeCheckoutOrder', () => {
   it('attaches checkout credentials returned beside the order', () => {
-    const order = { orderId: 42, status: 'PENDING_PAYMENT' }
+    const order = { orderId: 42, publicOrderId: 'public-id-42', status: 'PENDING_PAYMENT' }
 
     expect(normalizeCheckoutOrder({
       order,
@@ -33,6 +33,18 @@ describe('normalizeCheckoutOrder', () => {
         mercadoPagoCheckoutUrl: 'https://www.mercadopago.com/checkout'
       },
       mercadoPagoCheckoutUrl: 'https://www.mercadopago.com/checkout'
+    })
+  })
+
+  it('attaches a public order ID returned beside a nested order', () => {
+    expect(normalizeCheckoutOrder({
+      publicOrderId: 'public-id-42',
+      orderTrackingToken: 'private-token',
+      order: { orderId: 42, status: 'CONFIRMED' }
+    }).order).toMatchObject({
+      orderId: 42,
+      publicOrderId: 'public-id-42',
+      orderTrackingToken: 'private-token'
     })
   })
 

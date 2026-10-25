@@ -15,6 +15,7 @@ vi.mock('../composables/useOrderTracking.js', async () => {
 
 const makeOrder = (orderStatus) => ({
   orderId: 42,
+  publicOrderId: 'public-order-id',
   orderTrackingToken: 'tracking-token',
   orderStatus,
   paymentProvider: 'TRANSFER',
@@ -115,6 +116,12 @@ describe('CheckoutPage cancelled order removal', () => {
     expect(details.textContent).toContain('Café')
     expect(details.textContent).toContain('Molido')
     expect(details.textContent).toContain('500 g')
+    const orderStatus = container.querySelector('.tracked-order-heading .status-badge')
+    const actions = container.querySelector('.tracked-order-actions')
+    const route = container.querySelector('.order-timeline')
+    expect(orderStatus.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(actions.compareDocumentPosition(route) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(route.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
     app.unmount()
   })
@@ -128,13 +135,16 @@ describe('CheckoutPage cancelled order removal', () => {
     })
     const { app, container } = render('PREPARING')
 
-    container.querySelector('.tracked-order-sharing button').click()
+    container.querySelector('.tracked-order-actions button').click()
     await Promise.resolve()
     await nextTick()
 
     expect(writeText).toHaveBeenCalledOnce()
-    expect(writeText.mock.calls[0][0]).toContain('orderId=42')
-    expect(container.querySelector('.tracked-order-sharing button').textContent)
+    const sharedUrl = new URL(writeText.mock.calls[0][0])
+    expect(sharedUrl.pathname).toContain('/orders/public-order-id')
+    expect(sharedUrl.hash).toContain('trackingToken=tracking-token')
+    expect(sharedUrl.search).toBe('')
+    expect(container.querySelector('.tracked-order-actions button').textContent)
       .toContain('Link copiado')
 
     app.unmount()
@@ -148,7 +158,7 @@ describe('CheckoutPage cancelled order removal', () => {
   it('asks for confirmation and submits an optional cancellation reason only when allowed', async () => {
     const { app, container, cancelOrder } = render('CONFIRMED', { canCancelOrder: true })
 
-    container.querySelector('.tracked-order-cancellation > button').click()
+    container.querySelector('.tracked-order-cancellation button').click()
     await nextTick()
 
     expect(container.textContent).toContain('¿Querés cancelar el pedido #42?')

@@ -1,24 +1,24 @@
 const returnStorageKey = (storeSlug) =>
   `vitrinapp-mercadopago-return-${encodeURIComponent(storeSlug)}`
 
-export const rememberMercadoPagoReturn = (storeSlug, orderId, storage) => {
-  if (orderId === undefined || orderId === null || String(orderId).trim() === '') return false
+export const rememberMercadoPagoReturnPublicOrderId = (storeSlug, publicOrderId, storage) => {
+  if (publicOrderId === undefined || publicOrderId === null || String(publicOrderId).trim() === '') return false
   try {
     const targetStorage = storage ?? globalThis.sessionStorage
-    targetStorage.setItem(returnStorageKey(storeSlug), String(orderId))
+    targetStorage.setItem(returnStorageKey(storeSlug), String(publicOrderId))
     return true
   } catch {
     return false
   }
 }
 
-export const takeMercadoPagoReturnOrderId = (storeSlug, storage) => {
+export const takeMercadoPagoReturnPublicOrderId = (storeSlug, storage) => {
   try {
     const targetStorage = storage ?? globalThis.sessionStorage
     const key = returnStorageKey(storeSlug)
-    const orderId = targetStorage.getItem(key) ?? ''
-    if (orderId) targetStorage.removeItem(key)
-    return orderId
+    const publicOrderId = targetStorage.getItem(key) ?? ''
+    if (publicOrderId) targetStorage.removeItem(key)
+    return publicOrderId
   } catch {
     return ''
   }

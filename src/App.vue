@@ -10,17 +10,28 @@ import CheckoutPage from './components/CheckoutPage.vue'
 import WelcomePage from './components/WelcomePage.vue'
 import storeInfo from './data/store-info.json'
 import { requestStoreApi } from './api/store.js'
-import { IS_ENVIRONMENT_MISMATCH, IS_HOME, REQUESTED_ORDER_ID, STORE_SLUG, buildStorePath } from './config/store.js'
+import {
+  IS_ENVIRONMENT_MISMATCH,
+  IS_HOME,
+  REQUESTED_PUBLIC_ORDER_ID,
+  STORE_SLUG,
+  buildStorePath
+} from './config/store.js'
 import { useVisitorCart } from './composables/useVisitorCart.js'
 import { useStoreOrders } from './composables/useStoreOrders.js'
 import { resolveStoreAssetUrl } from './utils/resolveStoreAssetUrl.js'
-import { takeMercadoPagoReturnOrderId } from './utils/mercadoPagoReturn.js'
+import { takeMercadoPagoReturnPublicOrderId } from './utils/mercadoPagoReturn.js'
+import { consumeOrderTrackingTokenFromHash } from './utils/orderTrackingCredentials.js'
 import { readQuantityRules } from './utils/quantityRules.js'
 import { isValidEmail } from './utils/invoiceData.js'
 import { isStoreCurrentlyOpen, normalizeWeeklyHours } from './utils/storeHours.js'
 import { blendColors, getContrastColor, getReadableColor, LIGHT_TEXT_COLOR } from './utils/contrast.js'
 const isHome = IS_HOME
 const environmentMismatch = IS_ENVIRONMENT_MISMATCH
+const orderTrackingTokenFromLink = consumeOrderTrackingTokenFromHash({
+  storeSlug: STORE_SLUG,
+  publicOrderId: REQUESTED_PUBLIC_ORDER_ID
+})
 const LOADING_PRIMARY_COLOR = '#9ca3af'
 const LOADING_SECONDARY_COLOR = '#e5e7eb'
 const LOADING_BACKGROUND_COLOR = '#f3f4f6'
@@ -341,7 +352,7 @@ const {
   addOrder: saveStoreOrder,
   cancelOrder: cancelStoreOrder,
   changePaymentMethod: changeStorePaymentMethod,
-  loadOrderById,
+  loadOrderByPublicId,
   orders,
   orderErrors,
   removeOrder: removeStoreOrder,
@@ -619,6 +630,9 @@ onMounted(async () => {
   storeClockInterval = window.setInterval(() => {
     currentClock.value = Date.now()
   }, 60_000)
+  const requestedOrderPromise = REQUESTED_PUBLIC_ORDER_ID
+    ? loadOrderByPublicId(REQUESTED_PUBLIC_ORDER_ID, orderTrackingTokenFromLink)
+    : null
 
   if ('IntersectionObserver' in window) {
     productsObserver = new IntersectionObserver((entries) => {
@@ -630,19 +644,24 @@ onMounted(async () => {
   }
 
   await loadProducts()
-  if (!storeNotFound.value && !storeError.value) {
+  if (!storeNotFound.value && !storeError.value && !REQUESTED_PUBLIC_ORDER_ID) {
     await initializeCart()
     await ensureSelectedProduct()
     await loadDeliveryAvailability()
-    const mercadoPagoReturnOrderId = takeMercadoPagoReturnOrderId(STORE_SLUG)
+  }
+  if (!storeNotFound.value && REQUESTED_PUBLIC_ORDER_ID) {
+    const result = await requestedOrderPromise
+    const requestedOrder = orders.value.find((order) =>
+      order.publicOrderId === REQUESTED_PUBLIC_ORDER_ID)
+    openOrderTracking(result === 'ok' ? String(requestedOrder?.orderId ?? '') : REQUESTED_PUBLIC_ORDER_ID)
+  } else if (!storeNotFound.value && !storeError.value) {
+    const mercadoPagoReturnPublicOrderId = takeMercadoPagoReturnPublicOrderId(STORE_SLUG)
     const returnedOrder = orders.value.find((order) =>
-      String(order.orderId) === mercadoPagoReturnOrderId &&
+      order.publicOrderId === mercadoPagoReturnPublicOrderId &&
       order.paymentProvider === 'MERCADO_PAGO')
-    if (REQUESTED_ORDER_ID) {
-      await loadOrderById(REQUESTED_ORDER_ID)
-      openOrderTracking(REQUESTED_ORDER_ID)
-    } else if (returnedOrder) {
-      openOrderTracking(String(returnedOrder.orderId))
+    if (returnedOrder) {
+      const result = await loadOrderByPublicId(returnedOrder.publicOrderId)
+      openOrderTracking(result === 'ok' ? String(returnedOrder.orderId) : returnedOrder.publicOrderId)
     }
   }
 })
@@ -697,7 +716,7 @@ const beginCheckout = async () => {
 
 const returnToStore = () => {
   const storePath = buildStorePath(STORE_SLUG)
-  if (window.location.pathname !== storePath || REQUESTED_ORDER_ID) {
+  if (window.location.pathname !== storePath || REQUESTED_PUBLIC_ORDER_ID) {
     window.location.assign(storePath)
     return
   }
@@ -709,7 +728,7 @@ const returnToStore = () => {
 
 const openOrderTracking = (requestedOrderId = '') => {
   const target = requestedOrderId
-    ? orders.value.find((order) => String(order.orderId) === requestedOrderId)
+    ? orders.value.find((order) => String(order.orderId) === String(requestedOrderId))
     : orders.value[0]
   cartOpen.value = false
   trackedOrderId.value = target?.orderId ?? null
@@ -808,7 +827,7 @@ onBeforeUnmount(() => {
           </div>
         </Message>
       </section>
-      <section v-else-if="storeError" class="store-status">
+      <section v-else-if="storeError && !REQUESTED_PUBLIC_ORDER_ID" class="store-status">
         <Message severity="error" :closable="false" class="store-status-message">
           <div>
             <strong>Error del servidor</strong>
@@ -832,8 +851,8 @@ onBeforeUnmount(() => {
         :refresh-cart="refreshCurrentCart"
         :orders="orders"
         :tracked-order-id="trackedOrderId"
-        :requested-order-id="trackingFromUrl ? REQUESTED_ORDER_ID : ''"
-        :load-order-by-id="loadOrderById"
+        :requested-public-order-id="trackingFromUrl ? REQUESTED_PUBLIC_ORDER_ID : ''"
+        :load-order-by-public-id="loadOrderByPublicId"
         :cancel-order="cancelStoreOrder"
         :change-payment-method="changeStorePaymentMethod"
         :remove-order="removeStoreOrder"

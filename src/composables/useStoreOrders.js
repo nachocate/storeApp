@@ -3,6 +3,11 @@ import { requestStoreApi } from '../api/store.js'
 import { STORE_SLUG } from '../config/store.js'
 import { normalizeStatusTimeline } from '../utils/orderStatusStyles.js'
 import { normalizeOrderItems, readOrderItems } from '../utils/orderItems.js'
+import {
+  forgetOrderTrackingToken,
+  readOrderTrackingToken,
+  rememberOrderTrackingToken
+} from '../utils/orderTrackingCredentials.js'
 
 const ORDER_TTL_MS = 30 * 24 * 60 * 60 * 1000
 const MAX_PROOF_SIZE = 5 * 1024 * 1024
@@ -88,6 +93,7 @@ export const useStoreOrders = ({
     const createdAt = order.createdAt ?? new Date(now()).toISOString()
     const record = {
       orderId: order.orderId,
+      publicOrderId: order.publicOrderId ?? null,
       orderTrackingToken: order.orderTrackingToken,
       orderStatus: order.orderStatus ?? order.status,
       items: normalizeOrderItems(order.items),
@@ -111,11 +117,16 @@ export const useStoreOrders = ({
     }
     orders.value = [record, ...orders.value.filter((item) => item.orderId !== record.orderId)]
     if (!persistOrders()) throw new Error('No se pudo guardar el pedido en este navegador.')
+    if (record.publicOrderId) {
+      rememberOrderTrackingToken(storeSlug, record.publicOrderId, record.orderTrackingToken)
+    }
     return record
   }
 
   const removeOrder = (orderId) => {
+    const order = orders.value.find((item) => String(item.orderId) === String(orderId))
     orders.value = orders.value.filter((order) => String(order.orderId) !== String(orderId))
+    if (order?.publicOrderId) forgetOrderTrackingToken(storeSlug, order.publicOrderId)
     delete orderErrors[orderId]
     delete transferErrors[orderId]
     delete transferSuccess[orderId]
@@ -123,20 +134,25 @@ export const useStoreOrders = ({
     persistOrders()
   }
 
-  const normalizeTrackedOrder = (current, orderId, { shared = false } = {}) => {
-    if (String(current?.orderId) !== String(orderId)) return null
+  const normalizeTrackedOrder = (current, orderId, { expectedPublicOrderId } = {}) => {
+    if (current?.orderId === undefined || current?.orderId === null ||
+      String(current.orderId) !== String(orderId)) return null
+    if (
+      expectedPublicOrderId !== undefined &&
+      current.publicOrderId !== expectedPublicOrderId
+    ) return null
     const orderStatus = current.status ?? current.orderStatus
     if (orderStatus === 'COMPLETED') return { orderStatus, completed: true }
     const items = readOrderItems(current)
 
     return {
       orderId: current.orderId,
-      ...(shared ? { shared: true } : {}),
+      publicOrderId: current.publicOrderId ?? null,
       orderStatus,
       ...(items.length ? { items } : {}),
       paymentProvider: current.paymentProvider ?? null,
       paymentStatus: current.paymentStatus ?? null,
-      mercadoPagoCheckoutUrl: shared ? null : current.mercadoPagoCheckoutUrl ?? null,
+      mercadoPagoCheckoutUrl: current.mercadoPagoCheckoutUrl ?? null,
       fulfillmentType: current.fulfillmentType ?? null,
       totalAmount: current.totalAmount ?? null,
       currency: current.currency ?? null,
@@ -144,43 +160,73 @@ export const useStoreOrders = ({
       scheduledDate: current.scheduledDate ?? null,
       scheduledStartsAt: current.scheduledStartsAt ?? null,
       scheduledEndsAt: current.scheduledEndsAt ?? null,
-      transferAlias: shared ? null : current.transferAlias ?? null,
-      transferAccountHolder: shared ? null : current.transferAccountHolder ?? null,
-      canCancelOrder: !shared && current.canCancelOrder === true,
-      cancellationDeadline: shared ? null : current.cancellationDeadline ?? null,
-      canChangePaymentMethod: !shared && current.canChangePaymentMethod === true,
-      availablePaymentMethodChanges: shared
-        ? []
-        : normalizePaymentMethodChanges(current.availablePaymentMethodChanges),
+      transferAlias: current.transferAlias ?? null,
+      transferAccountHolder: current.transferAccountHolder ?? null,
+      canCancelOrder: current.canCancelOrder === true,
+      cancellationDeadline: current.cancellationDeadline ?? null,
+      canChangePaymentMethod: current.canChangePaymentMethod === true,
+      availablePaymentMethodChanges: normalizePaymentMethodChanges(current.availablePaymentMethodChanges),
       statusTimeline: normalizeStatusTimeline(current.statusTimeline)
     }
   }
 
-  const loadOrderById = async (orderId) => {
-    const existingOrder = orders.value.find((item) => String(item.orderId) === String(orderId))
-    if (existingOrder && existingOrder.orderTrackingToken) return 'ok'
-    if (orderId === undefined || orderId === null || !String(orderId).trim()) return 'unavailable'
+  const loadOrderByPublicId = async (publicOrderId, suppliedToken = '') => {
+    if (typeof publicOrderId !== 'string' || !publicOrderId.trim()) return 'unavailable'
+    const existingOrder = orders.value.find((item) => item.publicOrderId === publicOrderId)
+    const orderTrackingToken = suppliedToken ||
+      readOrderTrackingToken(storeSlug, publicOrderId) ||
+      existingOrder?.orderTrackingToken ||
+      ''
+    if (!orderTrackingToken) return 'unavailable'
+    rememberOrderTrackingToken(storeSlug, publicOrderId, orderTrackingToken)
 
     try {
-      const payload = await apiRequest(`/orders/${encodeURIComponent(String(orderId))}`)
+      const payload = await apiRequest('/orders/current', { orderTrackingToken })
       const current = payload?.order ?? payload?.data?.order ?? payload?.data ?? payload
-      const order = normalizeTrackedOrder(current, orderId, { shared: true })
-      if (!order) return 'unavailable'
+      const order = normalizeTrackedOrder(current, current?.orderId, { expectedPublicOrderId: publicOrderId })
+      if (!order) {
+        forgetOrderTrackingToken(storeSlug, publicOrderId)
+        return 'invalid-link'
+      }
+      if (order.completed) {
+        const completedOrder = {
+          orderId: current.orderId,
+          publicOrderId,
+          orderTrackingToken,
+          orderStatus: 'COMPLETED',
+          shared: true,
+          expiresAt: now() + ORDER_TTL_MS
+        }
+        orders.value = [
+          completedOrder,
+          ...orders.value.filter((item) => item.publicOrderId !== publicOrderId)
+        ]
+        persistOrders()
+        return 'ok'
+      }
       const sharedOrder = {
-        orderId: current.orderId,
         ...order,
-        items: order.items ?? [],
-        expiresAt: undefined
+        orderTrackingToken,
+        items: order.items ?? existingOrder?.items ?? [],
+        expiresAt: now() + ORDER_TTL_MS,
+        ...(existingOrder?.orderTrackingToken ? {} : { shared: true })
       }
       orders.value = [
         sharedOrder,
-        ...orders.value.filter((item) => String(item.orderId) !== String(orderId))
+        ...orders.value.filter((item) =>
+          String(item.orderId) !== String(sharedOrder.orderId) &&
+          item.publicOrderId !== publicOrderId)
       ]
-      delete orderErrors[orderId]
+      delete orderErrors[publicOrderId]
+      persistOrders()
       return 'ok'
     } catch (error) {
-      if (error.status === 404) return 'unavailable'
-      orderErrors[orderId] = 'No se pudo cargar el pedido. Revisá tu conexión e intentá nuevamente.'
+      if (error.status === 401 || error.status === 404) {
+        forgetOrderTrackingToken(storeSlug, publicOrderId)
+        if (existingOrder) removeOrder(existingOrder.orderId)
+        return 'invalid-link'
+      }
+      orderErrors[publicOrderId] = 'No se pudo cargar el pedido. Revisá tu conexión e intentá nuevamente.'
       return 'error'
     }
   }
@@ -188,20 +234,20 @@ export const useStoreOrders = ({
   // Used by the tracking view: keeps finished orders visible and reports lost access explicitly.
   const syncOrder = async (orderId) => {
     const order = orders.value.find((item) => String(item.orderId) === String(orderId))
-    if (!order || (order.expiresAt && Number(order.expiresAt) <= now())) {
+    if (!order || !order.orderTrackingToken || (order.expiresAt && Number(order.expiresAt) <= now())) {
       if (order) removeOrder(orderId)
       return 'unavailable'
     }
 
     try {
-      const current = order.orderTrackingToken
-        ? await apiRequest('/orders/current', {
-          orderTrackingToken: order.orderTrackingToken
-        })
-        : await apiRequest(`/orders/${encodeURIComponent(String(orderId))}`)
-      const normalizedOrder = normalizeTrackedOrder(current?.order ?? current?.data?.order ?? current?.data ?? current, orderId, {
-        shared: order.shared
+      const current = await apiRequest('/orders/current', {
+        orderTrackingToken: order.orderTrackingToken
       })
+      const normalizedOrder = normalizeTrackedOrder(
+        current?.order ?? current?.data?.order ?? current?.data ?? current,
+        orderId,
+        order.publicOrderId ? { expectedPublicOrderId: order.publicOrderId } : {}
+      )
       if (!normalizedOrder) {
         removeOrder(orderId)
         return 'unavailable'
@@ -217,7 +263,7 @@ export const useStoreOrders = ({
       persistOrders()
       return 'ok'
     } catch (error) {
-      if (error.status === 404 || (error.status === 401 && order.orderTrackingToken)) {
+      if (error.status === 404 || error.status === 401) {
         removeOrder(orderId)
         return 'unavailable'
       }
@@ -348,7 +394,7 @@ export const useStoreOrders = ({
     addOrder,
     cancelOrder,
     changePaymentMethod,
-    loadOrderById,
+    loadOrderByPublicId,
     orderErrors,
     orders,
     syncOrder,

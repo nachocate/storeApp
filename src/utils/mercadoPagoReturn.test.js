@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { rememberMercadoPagoReturn, takeMercadoPagoReturnOrderId } from './mercadoPagoReturn.js'
+import {
+  rememberMercadoPagoReturnPublicOrderId,
+  takeMercadoPagoReturnPublicOrderId
+} from './mercadoPagoReturn.js'
 
 const createStorage = () => {
   const values = new Map()
@@ -14,10 +17,10 @@ describe('Mercado Pago return tracking', () => {
   it('remembers and consumes an order id scoped to its store', () => {
     const storage = createStorage()
 
-    expect(rememberMercadoPagoReturn('store-a', 42, storage)).toBe(true)
-    expect(takeMercadoPagoReturnOrderId('store-b', storage)).toBe('')
-    expect(takeMercadoPagoReturnOrderId('store-a', storage)).toBe('42')
-    expect(takeMercadoPagoReturnOrderId('store-a', storage)).toBe('')
+    expect(rememberMercadoPagoReturnPublicOrderId('store-a', 'public-id-42', storage)).toBe(true)
+    expect(takeMercadoPagoReturnPublicOrderId('store-b', storage)).toBe('')
+    expect(takeMercadoPagoReturnPublicOrderId('store-a', storage)).toBe('public-id-42')
+    expect(takeMercadoPagoReturnPublicOrderId('store-a', storage)).toBe('')
   })
 
   it('handles unavailable session storage without interrupting payment flow', () => {
@@ -27,7 +30,7 @@ describe('Mercado Pago return tracking', () => {
       removeItem() { throw new Error('storage unavailable') }
     }
 
-    expect(rememberMercadoPagoReturn('store-a', 42, unavailableStorage)).toBe(false)
-    expect(takeMercadoPagoReturnOrderId('store-a', unavailableStorage)).toBe('')
+    expect(rememberMercadoPagoReturnPublicOrderId('store-a', 'public-id-42', unavailableStorage)).toBe(false)
+    expect(takeMercadoPagoReturnPublicOrderId('store-a', unavailableStorage)).toBe('')
   })
 })

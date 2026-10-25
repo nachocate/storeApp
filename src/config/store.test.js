@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   resolveApiBaseUrl,
+  buildOrderTrackingPath,
   resolveDeployEnv,
   resolveForeignSubdomain,
   resolveRequestedOrderId,
+  resolveRequestedPublicOrderId,
   resolveSubdomainSlug
 } from './store.js'
 
@@ -78,6 +80,10 @@ describe('resolveRequestedOrderId', () => {
   })
 
   it('reads an order id from a query without reading tracking credentials', () => {
+    expect(resolveRequestedOrderId('/almacen-demo', '?publicOrderId=public-42'))
+      .toBe('public-42')
+    expect(resolveRequestedPublicOrderId('/almacen-demo/orders/public-42'))
+      .toBe('public-42')
     expect(resolveRequestedOrderId('/almacen-demo', '?orderId=order-42&token=secret'))
       .toBe('order-42')
     expect(resolveRequestedOrderId('/almacen-demo', '?orderId=order%252F42')).toBe('order%2F42')
@@ -89,5 +95,10 @@ describe('resolveRequestedOrderId', () => {
 
   it('returns an empty value when no order id is present', () => {
     expect(resolveRequestedOrderId('/almacen-demo/cart')).toBe('')
+  })
+
+  it('builds public order paths for subdomain and path-based storefronts', () => {
+    expect(buildOrderTrackingPath('public-42', 'shop', false)).toBe('/orders/public-42')
+    expect(buildOrderTrackingPath('public-42', 'shop', true)).toBe('/shop/orders/public-42')
   })
 })

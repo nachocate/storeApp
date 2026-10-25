@@ -11,6 +11,9 @@ export const normalizeCheckoutOrder = (result) => {
   const orderTrackingToken = order.orderTrackingToken ??
     payload?.orderTrackingToken ??
     result?.orderTrackingToken
+  const publicOrderId = order.publicOrderId ??
+    payload?.publicOrderId ??
+    result?.publicOrderId
   const mercadoPagoCheckoutUrl = order.mercadoPagoCheckoutUrl ??
     payload?.mercadoPagoCheckoutUrl ??
     result?.mercadoPagoCheckoutUrl ??
@@ -20,6 +23,7 @@ export const normalizeCheckoutOrder = (result) => {
     order: {
       ...order,
       orderStatus: order.orderStatus ?? order.status,
+      ...(publicOrderId ? { publicOrderId } : {}),
       ...(orderTrackingToken ? { orderTrackingToken } : {}),
       mercadoPagoCheckoutUrl
     },

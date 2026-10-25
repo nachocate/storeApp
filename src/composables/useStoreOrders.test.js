@@ -17,11 +17,15 @@ const createMountedOrders = (options = {}) => {
 describe('useStoreOrders', () => {
   let mountedOrders
 
-  beforeEach(() => localStorage.clear())
+  beforeEach(() => {
+    localStorage.clear()
+    sessionStorage.clear()
+  })
   afterEach(() => {
     mountedOrders?.app.unmount()
     mountedOrders = null
     localStorage.clear()
+    sessionStorage.clear()
   })
 
   it('stores tracking credentials under a key scoped to the store', () => {
@@ -66,6 +70,19 @@ describe('useStoreOrders', () => {
       .toBe('Café')
   })
 
+  it('stores checkout tracking credentials by public order ID in the current session', () => {
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', now: () => 1000 })
+    mountedOrders.storeOrders.addOrder({
+      orderId: 42,
+      publicOrderId: 'public-id-42',
+      orderTrackingToken: 'private-token'
+    })
+
+    expect(sessionStorage.length).toBeGreaterThan(0)
+    expect(sessionStorage.getItem('vitrinapp-order-tracking-almacen-demo-public-id-42'))
+      .toContain('private-token')
+  })
+
   it('requires an order id to associate the tracking token with the order', () => {
     mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', now: () => 1000 })
 
@@ -100,11 +117,12 @@ describe('useStoreOrders', () => {
     expect(mountedOrders.storeOrders.orders.value).toEqual([])
   })
 
-  it('loads and refreshes a shared order by ID without storing a tracking token', async () => {
+  it('loads and refreshes an emailed order using its token and validates the public ID', async () => {
     const apiRequest = vi.fn()
       .mockResolvedValueOnce({
         data: {
           orderId: 42,
+          publicOrderId: 'public-id-42',
           status: 'PENDING_PAYMENT',
           canCancelOrder: true,
           canChangePaymentMethod: true,
@@ -113,30 +131,85 @@ describe('useStoreOrders', () => {
       })
       .mockResolvedValueOnce({
         orderId: 42,
+        publicOrderId: 'public-id-42',
         status: 'PREPARING',
         canCancelOrder: true,
         canChangePaymentMethod: true
       })
     mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', apiRequest, now: () => 1000 })
 
-    await expect(mountedOrders.storeOrders.loadOrderById('42')).resolves.toBe('ok')
+    await expect(mountedOrders.storeOrders.loadOrderByPublicId('public-id-42', 'email-token')).resolves.toBe('ok')
     const sharedOrder = mountedOrders.storeOrders.orders.value[0]
     expect(sharedOrder).toMatchObject({
       orderId: 42,
+      publicOrderId: 'public-id-42',
       orderStatus: 'PENDING_PAYMENT',
       shared: true,
-      canCancelOrder: false,
-      canChangePaymentMethod: false
+      canCancelOrder: true,
+      canChangePaymentMethod: true
     })
-    expect(sharedOrder.orderTrackingToken).toBeUndefined()
+    expect(sharedOrder.orderTrackingToken).toBe('email-token')
     expect(JSON.parse(localStorage.getItem('vitrinapp-orders-almacen-demo'))).toEqual([])
 
     await expect(mountedOrders.storeOrders.syncOrder(42)).resolves.toBe('ok')
 
-    expect(apiRequest).toHaveBeenNthCalledWith(1, '/orders/42')
-    expect(apiRequest).toHaveBeenNthCalledWith(2, '/orders/42')
+    expect(apiRequest).toHaveBeenNthCalledWith(1, '/orders/current', {
+      orderTrackingToken: 'email-token'
+    })
+    expect(apiRequest).toHaveBeenNthCalledWith(2, '/orders/current', {
+      orderTrackingToken: 'email-token'
+    })
     expect(sharedOrder.orderStatus).toBe('PREPARING')
     expect(JSON.parse(localStorage.getItem('vitrinapp-orders-almacen-demo'))).toEqual([])
+  })
+
+  it('does not look up an order by public ID without a tracking token', async () => {
+    const apiRequest = vi.fn()
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', apiRequest, now: () => 1000 })
+
+    await expect(mountedOrders.storeOrders.loadOrderByPublicId('public-id-42')).resolves.toBe('unavailable')
+
+    expect(apiRequest).not.toHaveBeenCalled()
+    expect(mountedOrders.storeOrders.orders.value).toEqual([])
+  })
+
+  it('keeps a completed shared order available long enough to show its final status', async () => {
+    const apiRequest = vi.fn().mockResolvedValue({
+      orderId: 42,
+      publicOrderId: 'public-id-42',
+      status: 'COMPLETED'
+    })
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', apiRequest, now: () => 1000 })
+
+    await expect(mountedOrders.storeOrders.loadOrderByPublicId('public-id-42', 'email-token')).resolves.toBe('ok')
+
+    expect(mountedOrders.storeOrders.orders.value).toEqual([
+      expect.objectContaining({
+        orderId: 42,
+        publicOrderId: 'public-id-42',
+        orderStatus: 'COMPLETED',
+        shared: true
+      })
+    ])
+    expect(JSON.parse(localStorage.getItem('vitrinapp-orders-almacen-demo'))).toEqual([])
+  })
+
+  it('rejects a token that resolves to a different public order ID', async () => {
+    const apiRequest = vi.fn().mockResolvedValue({
+      orderId: 42,
+      publicOrderId: 'another-public-id',
+      status: 'PREPARING'
+    })
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', apiRequest, now: () => 1000 })
+
+    await expect(mountedOrders.storeOrders.loadOrderByPublicId('public-id-42', 'email-token'))
+      .resolves.toBe('invalid-link')
+
+    expect(apiRequest).toHaveBeenCalledWith('/orders/current', {
+      orderTrackingToken: 'email-token'
+    })
+    expect(mountedOrders.storeOrders.orders.value).toEqual([])
+    expect(sessionStorage.getItem('vitrinapp-order-tracking-almacen-demo-public-id-42')).toBeNull()
   })
 
   it('removes an order from local storage while preserving other saved orders', () => {
