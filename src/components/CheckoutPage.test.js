@@ -126,6 +126,25 @@ describe('CheckoutPage cancelled order removal', () => {
     app.unmount()
   })
 
+  it('places transfer proof guidance above its control and keeps action controls last in their cards', () => {
+    const { app, container } = render('PENDING_PAYMENT', {
+      canCancelOrder: true,
+      transferAlias: 'tienda.transferencia'
+    })
+
+    const proofCard = container.querySelector('.proof-region')
+    const proofGuidance = proofCard.querySelector('small')
+    const proofControl = proofCard.querySelector('.proof-input-label')
+    expect(proofGuidance.textContent).toContain('JPEG, PNG o WebP')
+    expect(proofGuidance.compareDocumentPosition(proofControl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(proofCard.lastElementChild).toBe(proofControl)
+
+    const cancellationCard = container.querySelector('.tracked-order-cancellation')
+    expect(cancellationCard.lastElementChild.textContent).toContain('Cancelar pedido')
+
+    app.unmount()
+  })
+
   it('copies a shareable order link and shows a temporary confirmation', async () => {
     const previousClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
     const writeText = vi.fn().mockResolvedValue(undefined)

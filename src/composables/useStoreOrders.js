@@ -170,7 +170,7 @@ export const useStoreOrders = ({
     }
   }
 
-  const loadOrderByPublicId = async (publicOrderId, suppliedToken = '') => {
+  const loadOrderByPublicId = async (publicOrderId, suppliedToken = '', { persistLocally = false } = {}) => {
     if (typeof publicOrderId !== 'string' || !publicOrderId.trim()) return 'unavailable'
     const existingOrder = orders.value.find((item) => item.publicOrderId === publicOrderId)
     const orderTrackingToken = suppliedToken ||
@@ -194,14 +194,17 @@ export const useStoreOrders = ({
           publicOrderId,
           orderTrackingToken,
           orderStatus: 'COMPLETED',
-          shared: true,
+          shared: !persistLocally,
           expiresAt: now() + ORDER_TTL_MS
         }
         orders.value = [
           completedOrder,
           ...orders.value.filter((item) => item.publicOrderId !== publicOrderId)
         ]
-        persistOrders()
+        if (!persistOrders() && persistLocally) {
+          orderErrors[publicOrderId] = 'No se pudo guardar el pedido en este navegador.'
+          return 'error'
+        }
         return 'ok'
       }
       const sharedOrder = {
@@ -209,7 +212,7 @@ export const useStoreOrders = ({
         orderTrackingToken,
         items: order.items ?? existingOrder?.items ?? [],
         expiresAt: now() + ORDER_TTL_MS,
-        ...(existingOrder?.orderTrackingToken ? {} : { shared: true })
+        shared: !persistLocally && !existingOrder?.orderTrackingToken
       }
       orders.value = [
         sharedOrder,
@@ -218,7 +221,10 @@ export const useStoreOrders = ({
           item.publicOrderId !== publicOrderId)
       ]
       delete orderErrors[publicOrderId]
-      persistOrders()
+      if (!persistOrders() && persistLocally) {
+        orderErrors[publicOrderId] = 'No se pudo guardar el pedido en este navegador.'
+        return 'error'
+      }
       return 'ok'
     } catch (error) {
       if (error.status === 401 || error.status === 404) {

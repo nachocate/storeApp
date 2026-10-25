@@ -1,5 +1,6 @@
 import { createApp } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { rememberOrderTrackingToken } from '../utils/orderTrackingCredentials.js'
 import { useStoreOrders } from './useStoreOrders.js'
 
 const createMountedOrders = (options = {}) => {
@@ -171,6 +172,37 @@ describe('useStoreOrders', () => {
 
     expect(apiRequest).not.toHaveBeenCalled()
     expect(mountedOrders.storeOrders.orders.value).toEqual([])
+  })
+
+  it('restores a Mercado Pago return to local storage when the order is missing locally', async () => {
+    const apiRequest = vi.fn().mockResolvedValue({
+      orderId: 42,
+      publicOrderId: 'public-id-42',
+      status: 'PENDING_PAYMENT',
+      paymentProvider: 'MERCADO_PAGO',
+      items: [{ name: 'Café', quantity: 1 }]
+    })
+    rememberOrderTrackingToken('almacen-demo', 'public-id-42', 'return-token')
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', apiRequest, now: () => 1000 })
+
+    await expect(mountedOrders.storeOrders.loadOrderByPublicId(
+      'public-id-42',
+      '',
+      { persistLocally: true }
+    )).resolves.toBe('ok')
+
+    expect(apiRequest).toHaveBeenCalledWith('/orders/current', {
+      orderTrackingToken: 'return-token'
+    })
+    expect(mountedOrders.storeOrders.orders.value[0]).toMatchObject({
+      orderId: 42,
+      publicOrderId: 'public-id-42',
+      orderStatus: 'PENDING_PAYMENT',
+      paymentProvider: 'MERCADO_PAGO',
+      shared: false
+    })
+    expect(JSON.parse(localStorage.getItem('vitrinapp-orders-almacen-demo'))[0])
+      .toMatchObject({ orderId: 42, publicOrderId: 'public-id-42', orderStatus: 'PENDING_PAYMENT' })
   })
 
   it('keeps a completed shared order available long enough to show its final status', async () => {

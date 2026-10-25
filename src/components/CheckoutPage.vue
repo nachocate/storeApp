@@ -853,6 +853,7 @@ onMounted(() => {
                 Transferí a <strong>{{ trackedOrder.transferAlias }}</strong>
                 <template v-if="trackedOrder.transferAccountHolder">, titular <strong>{{ trackedOrder.transferAccountHolder }}</strong></template>.
               </p>
+              <small>JPEG, PNG o WebP, hasta 5 MiB.</small>
               <label class="proof-input-label">
                 <i class="pi pi-upload" aria-hidden="true"></i>
                 <span>{{ uploadingProofs[trackedOrder.orderId] ? 'Enviando comprobante...' : 'Adjuntar comprobante' }}</span>
@@ -870,7 +871,6 @@ onMounted(() => {
               <Message v-if="transferErrors[trackedOrder.orderId]" severity="error" :closable="false">
                 {{ transferErrors[trackedOrder.orderId] }}
               </Message>
-              <small>JPEG, PNG o WebP, hasta 5 MiB.</small>
             </div>
 
             <div v-if="canCancelTrackedOrder" class="tracked-order-action tracked-order-cancellation">
@@ -1829,15 +1829,21 @@ onMounted(() => {
 }
 
 .tracked-order-action {
-  display: grid;
-  align-content: start;
-  justify-items: start;
+  display: flex;
+  flex-direction: column;
   gap: 0.65rem;
   min-width: 0;
   padding: 1rem;
   border: 1px solid rgba(24, 37, 28, 0.12);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.72);
+}
+
+.tracked-order-action > :deep(.p-button),
+.tracked-order-action > .proof-input-label,
+.tracked-order-action > .tracked-order-cancellation-confirmation,
+.tracked-order-action > .tracked-order-delete-confirmation {
+  margin-top: auto;
 }
 
 .tracked-order-action h3 {

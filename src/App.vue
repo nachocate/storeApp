@@ -656,12 +656,17 @@ onMounted(async () => {
     openOrderTracking(result === 'ok' ? String(requestedOrder?.orderId ?? '') : REQUESTED_PUBLIC_ORDER_ID)
   } else if (!storeNotFound.value && !storeError.value) {
     const mercadoPagoReturnPublicOrderId = takeMercadoPagoReturnPublicOrderId(STORE_SLUG)
-    const returnedOrder = orders.value.find((order) =>
-      order.publicOrderId === mercadoPagoReturnPublicOrderId &&
-      order.paymentProvider === 'MERCADO_PAGO')
-    if (returnedOrder) {
-      const result = await loadOrderByPublicId(returnedOrder.publicOrderId)
-      openOrderTracking(result === 'ok' ? String(returnedOrder.orderId) : returnedOrder.publicOrderId)
+    if (mercadoPagoReturnPublicOrderId) {
+      const result = await loadOrderByPublicId(
+        mercadoPagoReturnPublicOrderId,
+        '',
+        { persistLocally: true }
+      )
+      const returnedOrder = orders.value.find((order) =>
+        order.publicOrderId === mercadoPagoReturnPublicOrderId)
+      openOrderTracking(result === 'ok' && returnedOrder
+        ? String(returnedOrder.orderId)
+        : returnedOrder?.orderId ?? mercadoPagoReturnPublicOrderId)
     }
   }
 })
@@ -909,7 +914,7 @@ onBeforeUnmount(() => {
               text
               icon="pi pi-clock"
               label="Horarios"
-              aria-label="Ver horarios de atención"
+              aria-label="Ver horarios de atención de la tienda virtual"
               @click="hoursDialogVisible = true"
             />
           </div>
@@ -930,7 +935,7 @@ onBeforeUnmount(() => {
       <Dialog
         v-model:visible="hoursDialogVisible"
         modal
-        header="Horarios de atención"
+        header="Horarios de la tienda virtual"
         :style="{ width: 'min(92vw, 28rem)' }"
       >
         <div class="weekly-hours-list">
