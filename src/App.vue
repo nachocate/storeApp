@@ -338,8 +338,11 @@ const addPromotion = async (promotion) => {
 }
 const {
   addOrder: saveStoreOrder,
+  cancelOrder: cancelStoreOrder,
+  changePaymentMethod: changeStorePaymentMethod,
   orders,
   orderErrors,
+  removeOrder: removeStoreOrder,
   syncOrder,
   submitTransferProof,
   transferErrors,
@@ -819,6 +822,9 @@ onBeforeUnmount(() => {
         :orders="orders"
         :tracked-order-id="trackedOrderId"
         :requested-order-id="trackingFromUrl ? REQUESTED_ORDER_ID : ''"
+        :cancel-order="cancelStoreOrder"
+        :change-payment-method="changeStorePaymentMethod"
+        :remove-order="removeStoreOrder"
         :sync-order="syncOrder"
         :order-errors="orderErrors"
         :transfer-errors="transferErrors"
@@ -940,6 +946,7 @@ onBeforeUnmount(() => {
           <div
             ref="categoryPillsEl"
             class="category-pills"
+            data-hide-scroll-indicator
             role="group"
             aria-labelledby="category-filter-label"
             @scroll.passive="updateCategoryScroll"
@@ -1569,11 +1576,14 @@ onBeforeUnmount(() => {
     overflow-x: auto;
     padding: 0.15rem 0.1rem;
     scroll-snap-type: x proximity;
-    scrollbar-width: none;
+    scrollbar-width: none !important;
+    -ms-overflow-style: none;
   }
 
   .category-pills::-webkit-scrollbar {
-    display: none;
+    display: none !important;
+    width: 0;
+    height: 0;
   }
 
   .category-pill {

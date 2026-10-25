@@ -39,6 +39,9 @@ const props = defineProps({
   orders: { type: Array, default: () => [] },
   trackedOrderId: { type: [String, Number], default: null },
   requestedOrderId: { type: String, default: '' },
+  cancelOrder: { type: Function, required: true },
+  changePaymentMethod: { type: Function, required: true },
+  removeOrder: { type: Function, required: true },
   syncOrder: { type: Function, required: true },
   orderErrors: { type: Object, required: true },
   transferErrors: { type: Object, required: true },
@@ -52,6 +55,45 @@ const emit = defineEmits(['back', 'complete'])
 const trackingOnly = props.trackedOrderId !== null || Boolean(props.requestedOrderId)
 const activeOrderId = ref(props.trackedOrderId)
 const trackedOrder = computed(() => props.orders.find((order) => order.orderId === activeOrderId.value))
+const trackedOrderStatus = computed(() => String(trackedOrder.value?.orderStatus ?? '').trim().toUpperCase())
+const canDeleteTrackedOrder = computed(() => ['CANCELLED', 'CANCELED'].includes(trackedOrderStatus.value))
+const canCancelTrackedOrder = computed(() =>
+  trackedOrder.value?.canCancelOrder === true &&
+  ['PENDING', 'PENDING_AVAILABILITY', 'PENDING_PAYMENT', 'AWAITING_PAYMENT',
+    'AWAITING_PAYMENT_PROOF', 'PAYMENT_PROOF_UNDER_REVIEW', 'PAYMENT_UNDER_REVIEW',
+    'UNDER_REVIEW', 'CONFIRMED'].includes(trackedOrderStatus.value))
+const paymentChangeOptions = computed(() =>
+  (Array.isArray(trackedOrder.value?.availablePaymentMethodChanges)
+    ? trackedOrder.value.availablePaymentMethodChanges
+    : []).filter((option) =>
+    ['CASH', 'TRANSFER', 'MERCADO_PAGO'].includes(option?.provider) &&
+    typeof option.label === 'string' &&
+    option.provider !== trackedOrder.value?.paymentProvider &&
+    !blockedPaymentProviders.value.has(option.provider)))
+const canChangeTrackedPaymentMethod = computed(() =>
+  trackedOrder.value?.canChangePaymentMethod === true && paymentChangeOptions.value.length > 0)
+const confirmingOrderDeletion = ref(false)
+const deletedOrderId = ref(null)
+const confirmingOrderCancellation = ref(false)
+const cancellingOrder = ref(false)
+const cancellationReason = ref('')
+const cancellationMessage = ref('')
+const cancellationMessageSeverity = ref('error')
+const paymentChangeDialogVisible = ref(false)
+const selectedPaymentProvider = ref('')
+const changingPaymentMethod = ref(false)
+const paymentChangeMessage = ref('')
+const paymentChangeMessageSeverity = ref('error')
+const blockedPaymentProviders = ref(new Set())
+watch(() => trackedOrder.value?.orderStatus, () => {
+  if (!canDeleteTrackedOrder.value) confirmingOrderDeletion.value = false
+})
+watch(() => trackedOrder.value?.canCancelOrder, (canCancel) => {
+  if (!canCancel) confirmingOrderCancellation.value = false
+})
+watch(canCancelTrackedOrder, (canCancel) => {
+  if (!canCancel) confirmingOrderCancellation.value = false
+})
 const { connection, finished: trackingFinished, unavailable: trackingUnavailable } = useOrderTracking({
   orderId: () => activeOrderId.value,
   orders: computed(() => props.orders),
@@ -62,6 +104,139 @@ const connectionLabel = computed(() => ({
   connecting: 'Conectando…',
   reconnecting: 'Reconectando…'
 }[connection.value] ?? ''))
+const deleteTrackedOrder = () => {
+  if (!confirmingOrderDeletion.value || !canDeleteTrackedOrder.value) return
+
+  const orderId = trackedOrder.value.orderId
+  const nextOrder = props.orders.find((order) => order.orderId !== orderId)
+  props.removeOrder(orderId)
+  confirmingOrderDeletion.value = false
+
+  if (nextOrder) {
+    activeOrderId.value = nextOrder.orderId
+    return
+  }
+
+  deletedOrderId.value = orderId
+  activeOrderId.value = null
+}
+const selectTrackedOrder = (order) => {
+  activeOrderId.value = order.orderId
+  confirmingOrderDeletion.value = false
+  confirmingOrderCancellation.value = false
+  cancellationReason.value = ''
+  cancellationMessage.value = ''
+  blockedPaymentProviders.value = new Set()
+}
+const cancelTrackedOrder = async () => {
+  if (!confirmingOrderCancellation.value || !canCancelTrackedOrder.value || cancellingOrder.value) return
+
+  cancellingOrder.value = true
+  cancellationMessage.value = ''
+  try {
+    const result = await props.cancelOrder(trackedOrder.value.orderId, cancellationReason.value)
+    const messages = {
+      cancelled: ['success', 'El pedido se canceló correctamente.'],
+      'not-allowed': ['error', 'Este pedido ya no se puede cancelar online.'],
+      unavailable: ['error', 'No encontramos este pedido. Se quitó el acceso guardado en este navegador.'],
+      error: ['error', 'No se pudo cancelar el pedido. Revisá tu conexión e intentá nuevamente.'],
+      unconfirmed: ['warn', 'Se envió la solicitud, pero no pudimos actualizar el estado. Volvé a intentar; la cancelación es segura para reintentar.'],
+      'invalid-reason': ['error', 'El motivo no puede superar los 255 caracteres.']
+    }
+    const [severity, message] = messages[result] ?? messages.error
+    cancellationMessageSeverity.value = severity
+    cancellationMessage.value = message
+    if (result === 'cancelled') cancellationReason.value = ''
+    if (result === 'cancelled' || result === 'not-allowed' || result === 'unavailable') {
+      confirmingOrderCancellation.value = false
+    }
+  } catch {
+    cancellationMessageSeverity.value = 'error'
+    cancellationMessage.value = 'No se pudo cancelar el pedido. Revisá tu conexión e intentá nuevamente.'
+  } finally {
+    cancellingOrder.value = false
+  }
+}
+const openPaymentChangeDialog = () => {
+  if (!canChangeTrackedPaymentMethod.value) return
+  selectedPaymentProvider.value = paymentChangeOptions.value[0].provider
+  paymentChangeMessage.value = ''
+  paymentChangeDialogVisible.value = true
+}
+const changeTrackedPaymentMethod = async () => {
+  if (
+    changingPaymentMethod.value ||
+    !canChangeTrackedPaymentMethod.value ||
+    !paymentChangeOptions.value.some((option) => option.provider === selectedPaymentProvider.value)
+  ) return
+
+  changingPaymentMethod.value = true
+  paymentChangeMessage.value = ''
+  try {
+    const result = await props.changePaymentMethod(trackedOrder.value.orderId, selectedPaymentProvider.value)
+    if (result === 'changed') {
+      if (trackedOrder.value.paymentProvider === 'MERCADO_PAGO') {
+        if (trackedOrderStatus.value === 'PENDING_AVAILABILITY') {
+          paymentChangeMessageSeverity.value = 'success'
+          paymentChangeMessage.value = 'El medio de pago se actualizó. La tienda debe confirmar la disponibilidad antes de iniciar el pago online.'
+          paymentChangeDialogVisible.value = false
+          return
+        }
+
+        try {
+          const paymentUrl = resolveMercadoPagoCheckoutUrl(trackedOrder.value.mercadoPagoCheckoutUrl)
+          if (!paymentUrl) {
+            paymentChangeMessageSeverity.value = 'error'
+            paymentChangeMessage.value = 'El pedido quedó pendiente de pago, pero no recibimos un enlace nuevo de Mercado Pago. No vuelvas a confirmar el pago; elegí otra alternativa disponible o contactá a la tienda.'
+            paymentChangeDialogVisible.value = false
+            return
+          }
+          window.location.assign(paymentUrl)
+          return
+        } catch {
+          paymentChangeMessageSeverity.value = 'error'
+          paymentChangeMessage.value = 'El pedido quedó pendiente de pago, pero no pudimos validar el enlace nuevo de Mercado Pago. No vuelvas a confirmar el pago; elegí otra alternativa disponible o contactá a la tienda.'
+          paymentChangeDialogVisible.value = false
+          return
+        }
+      }
+
+      paymentChangeMessageSeverity.value = 'success'
+      paymentChangeMessage.value = `El medio de pago cambió a ${describePaymentProvider(trackedOrder.value.paymentProvider).label}.`
+      paymentChangeDialogVisible.value = false
+      selectedPaymentProvider.value = ''
+      return
+    }
+
+    const messages = {
+      'invalid-request': 'La API rechazó esta alternativa. Actualizamos el pedido; elegí otra opción disponible o contactá a la tienda.',
+      'not-allowed': 'El pedido ya no admite cambios de medio de pago. Actualizamos su estado.',
+      'option-unavailable': 'Esa alternativa ya no está disponible. Actualizamos las opciones de pago.',
+      unchanged: 'El pedido ya usa ese medio de pago. Actualizamos su estado.',
+      unavailable: 'No pudimos recuperar el pedido. Se quitó el acceso guardado en este navegador.',
+      unconfirmed: 'El cambio se envió, pero no pudimos actualizar el estado. Revisá el seguimiento; no repitas el cambio hasta confirmar el medio vigente.',
+      error: 'No se pudo cambiar el medio de pago. Revisá tu conexión e intentá nuevamente.',
+      'invalid-option': 'Esa alternativa no está disponible para este pedido.'
+    }
+    if (result === 'invalid-request') {
+      blockedPaymentProviders.value = new Set([
+        ...blockedPaymentProviders.value,
+        selectedPaymentProvider.value
+      ])
+    }
+    paymentChangeMessageSeverity.value = result === 'option-unavailable' ? 'warn' : 'error'
+    paymentChangeMessage.value = messages[result] ?? messages.error
+    selectedPaymentProvider.value = ''
+    if (['invalid-request', 'not-allowed', 'unchanged', 'unavailable'].includes(result)) {
+      paymentChangeDialogVisible.value = false
+    }
+  } catch {
+    paymentChangeMessageSeverity.value = 'error'
+    paymentChangeMessage.value = 'No se pudo cambiar el medio de pago. Revisá tu conexión e intentá nuevamente.'
+  } finally {
+    changingPaymentMethod.value = false
+  }
+}
 const formatDate = (value) => value
   ? new Date(`${value.slice(0, 10)}T12:00:00`).toLocaleDateString('es-AR', {
     day: 'numeric',
@@ -531,7 +706,7 @@ onMounted(() => {
           size="small"
           :severity="order.orderId === activeOrderId ? 'primary' : 'secondary'"
           :aria-pressed="order.orderId === activeOrderId"
-          @click="activeOrderId = order.orderId"
+          @click="selectTrackedOrder(order)"
         />
       </nav>
 
@@ -539,11 +714,25 @@ onMounted(() => {
         Tu pedido fue completado y ya no se muestra en el seguimiento.
       </Message>
 
+      <Message v-else-if="deletedOrderId !== null" severity="success" :closable="false" class="tracking-message">
+        El pedido #{{ deletedOrderId }} se eliminó de este navegador.
+      </Message>
+
       <Message v-else-if="trackingUnavailable || (!trackedOrder && !orderSaveWarning)" severity="info" :closable="false" class="tracking-message">
         El seguimiento sólo puede abrirse desde el dispositivo y navegador que creó el pedido. Si necesitás ayuda, contactá al comercio.
       </Message>
 
-      <article v-else-if="trackedOrder" class="tracked-order">
+      <Message
+        v-if="cancellationMessage && !trackedOrder"
+        :severity="cancellationMessageSeverity"
+        :closable="false"
+        class="tracking-message"
+        role="status"
+      >
+        {{ cancellationMessage }}
+      </Message>
+
+      <article v-if="trackedOrder" class="tracked-order">
         <div class="tracked-order-heading">
           <div>
             <p class="tracked-order-number">Pedido #{{ trackedOrder.orderId }}</p>
@@ -553,6 +742,70 @@ onMounted(() => {
             {{ formatOrderStatus(trackedOrder.orderStatus) }}
           </span>
         </div>
+        <div v-if="canDeleteTrackedOrder" class="tracked-order-delete">
+          <Button
+            v-if="!confirmingOrderDeletion"
+            label="Eliminar pedido"
+            icon="pi pi-trash"
+            severity="danger"
+            text
+            @click="confirmingOrderDeletion = true"
+          />
+          <div v-else class="tracked-order-delete-confirmation" role="group" :aria-label="`Confirmar eliminación del pedido ${trackedOrder.orderId}`">
+            <p>¿Eliminar el pedido #{{ trackedOrder.orderId }} de este navegador?</p>
+            <Button label="Sí, eliminar" icon="pi pi-trash" severity="danger" @click="deleteTrackedOrder" />
+            <Button label="Conservar pedido" severity="secondary" outlined @click="confirmingOrderDeletion = false" />
+          </div>
+        </div>
+        <div v-if="canCancelTrackedOrder" class="tracked-order-cancellation">
+          <Button
+            v-if="!confirmingOrderCancellation"
+            label="Cancelar pedido"
+            icon="pi pi-times"
+            severity="danger"
+            outlined
+            @click="confirmingOrderCancellation = true"
+          />
+          <div v-else class="tracked-order-cancellation-confirmation">
+            <p>¿Querés cancelar el pedido #{{ trackedOrder.orderId }}?</p>
+            <label class="cancellation-reason-label">
+              Motivo (opcional)
+              <textarea
+                v-model="cancellationReason"
+                maxlength="255"
+                rows="2"
+                aria-label="Motivo opcional de cancelación"
+                :disabled="cancellingOrder"
+              ></textarea>
+            </label>
+            <div class="cancellation-actions">
+              <Button
+                label="Confirmar cancelación"
+                icon="pi pi-times"
+                severity="danger"
+                :loading="cancellingOrder"
+                :disabled="cancellingOrder"
+                @click="cancelTrackedOrder"
+              />
+              <Button
+                label="Volver"
+                severity="secondary"
+                text
+                :disabled="cancellingOrder"
+                @click="confirmingOrderCancellation = false"
+              />
+            </div>
+          </div>
+        </div>
+        <Message
+          v-if="cancellationMessage"
+          :severity="cancellationMessageSeverity"
+          :closable="false"
+          class="cancellation-message"
+          role="status"
+        >
+          {{ cancellationMessage }}
+        </Message>
         <OrderStatusTimeline
           :status="trackedOrder.orderStatus"
           :timeline="trackedOrder.statusTimeline"
@@ -593,6 +846,86 @@ onMounted(() => {
             <dd>{{ describePaymentProvider(trackedOrder.paymentProvider).label }}</dd>
           </div>
         </dl>
+
+        <div v-if="canChangeTrackedPaymentMethod" class="payment-method-change">
+          <p>
+            Medio de pago actual:
+            <strong>{{ describePaymentProvider(trackedOrder.paymentProvider).label }}</strong>
+          </p>
+          <Button
+            label="Cambiar medio de pago"
+            icon="pi pi-wallet"
+            severity="secondary"
+            outlined
+            @click="openPaymentChangeDialog"
+          />
+        </div>
+        <Message
+          v-if="paymentChangeMessage"
+          :severity="paymentChangeMessageSeverity"
+          :closable="false"
+          class="payment-change-message"
+          role="status"
+        >
+          {{ paymentChangeMessage }}
+        </Message>
+        <Dialog
+          v-model:visible="paymentChangeDialogVisible"
+          modal
+          header="Cambiar medio de pago"
+          :style="{ width: 'min(92vw, 32rem)' }"
+          :closable="!changingPaymentMethod"
+          :close-on-escape="!changingPaymentMethod"
+        >
+          <div class="payment-method-dialog">
+            <p>
+              Medio actual:
+              <strong>{{ describePaymentProvider(trackedOrder.paymentProvider).label }}</strong>
+            </p>
+            <fieldset :disabled="changingPaymentMethod || !canChangeTrackedPaymentMethod">
+              <legend>Elegí una alternativa</legend>
+              <label v-for="option in paymentChangeOptions" :key="option.provider" class="payment-method-option">
+                <input
+                  v-model="selectedPaymentProvider"
+                  type="radio"
+                  name="payment-method"
+                  :value="option.provider"
+                >
+                <span>{{ option.label }}</span>
+              </label>
+              <p v-if="!paymentChangeOptions.length" class="payment-method-empty">
+                No hay otras alternativas disponibles para este pedido.
+              </p>
+            </fieldset>
+            <p class="payment-method-notice">
+              Cambiar el medio de pago no modifica los productos ni el total del pedido.
+            </p>
+            <Message
+              v-if="paymentChangeMessage"
+              :severity="paymentChangeMessageSeverity"
+              :closable="false"
+              role="status"
+            >
+              {{ paymentChangeMessage }}
+            </Message>
+            <div class="payment-method-actions">
+              <Button
+                label="Confirmar cambio"
+                icon="pi pi-check"
+                :loading="changingPaymentMethod"
+                :disabled="changingPaymentMethod || !selectedPaymentProvider || !canChangeTrackedPaymentMethod"
+                @click="changeTrackedPaymentMethod"
+              />
+              <Button
+                label="Volver"
+                severity="secondary"
+                text
+                :disabled="changingPaymentMethod"
+                @click="paymentChangeDialogVisible = false"
+              />
+            </div>
+          </div>
+        </Dialog>
 
         <Message v-if="orderErrors[trackedOrder.orderId]" severity="error" :closable="false">
           {{ orderErrors[trackedOrder.orderId] }}
@@ -1334,6 +1667,143 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+}
+
+.tracked-order-delete {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.tracked-order-delete-confirmation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.tracked-order-delete-confirmation p {
+  flex: 1 1 100%;
+  margin: 0;
+  text-align: right;
+}
+
+.tracked-order-cancellation {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.tracked-order-cancellation-confirmation {
+  display: grid;
+  width: min(100%, 28rem);
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid color-mix(in srgb, var(--status-danger) 30%, #fff);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--status-danger) 5%, #fff);
+}
+
+.tracked-order-cancellation-confirmation p {
+  margin: 0;
+  font-weight: 700;
+}
+
+.cancellation-reason-label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.cancellation-reason-label textarea {
+  width: 100%;
+  min-height: 4rem;
+  padding: 0.6rem;
+  border: 1px solid color-mix(in srgb, var(--primary-color) 35%, #fff);
+  border-radius: 8px;
+  font: inherit;
+  resize: vertical;
+}
+
+.cancellation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.cancellation-message {
+  margin: 0;
+}
+
+.payment-method-change {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.payment-method-change p,
+.payment-method-dialog p {
+  margin: 0;
+}
+
+.payment-method-dialog {
+  display: grid;
+  gap: 1rem;
+}
+
+.payment-method-dialog fieldset {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.payment-method-dialog legend {
+  margin-bottom: 0.35rem;
+  font-weight: 700;
+}
+
+.payment-method-option {
+  display: flex;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--primary-color) 25%, #fff);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.payment-method-option:has(input:checked) {
+  border-color: var(--primary-color);
+  background: color-mix(in srgb, var(--primary-color) 8%, #fff);
+}
+
+.payment-method-option input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--primary-color);
+}
+
+.payment-method-notice,
+.payment-method-empty {
+  color: #526157;
+  font-size: 0.9rem;
+}
+
+.payment-method-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.payment-change-message {
+  margin: 0;
 }
 
 .tracked-order-number,

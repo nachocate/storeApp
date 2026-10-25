@@ -152,6 +152,7 @@ const scanScrollableElements = () => {
 
   for (const element of candidates) {
     if (!element || element.closest?.('.scroll-indicators-layer')) continue
+    if (element.hasAttribute?.('data-hide-scroll-indicator')) continue
     if (element !== scrollingElement) {
       const style = getComputedStyle(element)
       const axes = [

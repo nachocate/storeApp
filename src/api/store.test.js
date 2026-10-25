@@ -44,4 +44,45 @@ describe('requestStoreApi', () => {
     expect(options.body).toBe(formData)
     expect(url).not.toContain('private-order-token')
   })
+
+  it('sends cancellation reason and tracking token in the expected request fields', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 204
+    }))
+
+    await expect(requestStoreApi('/orders/current/cancellation', {
+      method: 'POST',
+      orderTrackingToken: 'private-order-token',
+      body: { reason: 'Ya no lo necesito.' }
+    })).resolves.toBeNull()
+
+    const [url, options] = fetch.mock.calls[0]
+    expect(url).toContain('/orders/current/cancellation')
+    expect(options.headers['X-Order-Tracking-Token']).toBe('private-order-token')
+    expect(options.headers['Content-Type']).toBe('application/json')
+    expect(options.body).toBe(JSON.stringify({ reason: 'Ya no lo necesito.' }))
+    expect(url).not.toContain('private-order-token')
+  })
+
+  it('sends payment method changes as PUT with the tracking token in a header', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ orderId: 42, paymentProvider: 'TRANSFER' })
+    }))
+
+    await requestStoreApi('/orders/current/payment-method', {
+      method: 'PUT',
+      orderTrackingToken: 'private-order-token',
+      body: { paymentProvider: 'TRANSFER' }
+    })
+
+    const [url, options] = fetch.mock.calls[0]
+    expect(url).toContain('/orders/current/payment-method')
+    expect(options.method).toBe('PUT')
+    expect(options.headers['X-Order-Tracking-Token']).toBe('private-order-token')
+    expect(options.body).toBe(JSON.stringify({ paymentProvider: 'TRANSFER' }))
+    expect(url).not.toContain('private-order-token')
+  })
 })

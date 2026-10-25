@@ -59,7 +59,12 @@ const showImage = (promotion) => promotion.image && !failedImages.value.includes
       >
         <i class="pi pi-chevron-left" aria-hidden="true"></i>
       </button>
-      <ul ref="scroller" class="promotions-track" @scroll.passive="updateScroll">
+      <ul
+        ref="scroller"
+        class="promotions-track"
+        :class="{ 'promotions-track-single': promotions.length === 1 }"
+        @scroll.passive="updateScroll"
+      >
         <li v-for="promotion in promotions" :key="promotion.id" class="promotion-card">
           <div class="promotion-media">
             <img
@@ -165,6 +170,14 @@ const showImage = (promotion) => promotion.image && !failedImages.value.includes
     overflow-x: auto;
     list-style: none;
     scroll-snap-type: x proximity;
+  }
+
+  .promotions-track-single {
+    justify-content: center;
+  }
+
+  .promotions-track-single .promotion-card {
+    flex: 0 0 min(350px, 100%);
   }
 
   .promotion-card {

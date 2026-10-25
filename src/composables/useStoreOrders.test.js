@@ -75,6 +75,186 @@ describe('useStoreOrders', () => {
     expect(mountedOrders.storeOrders.orders.value).toEqual([])
   })
 
+  it('removes an order from local storage while preserving other saved orders', () => {
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', now: () => 1000 })
+    mountedOrders.storeOrders.addOrder({ orderId: 42, orderTrackingToken: 'cancelled-token' })
+    mountedOrders.storeOrders.addOrder({ orderId: 43, orderTrackingToken: 'active-token' })
+
+    mountedOrders.storeOrders.removeOrder(42)
+
+    expect(mountedOrders.storeOrders.orders.value.map((order) => order.orderId)).toEqual([43])
+    expect(JSON.parse(localStorage.getItem('vitrinapp-orders-almacen-demo')).map((order) => order.orderId))
+      .toEqual([43])
+  })
+
+  it('refreshes the order before cancellation and syncs the cancelled state after success', async () => {
+    const apiRequest = vi.fn()
+      .mockResolvedValueOnce({
+        orderId: 42,
+        status: 'CONFIRMED',
+        canCancelOrder: true,
+        cancellationDeadline: '2026-10-25T13:00:00.000Z'
+      })
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ orderId: 42, status: 'CANCELLED', canCancelOrder: false })
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', apiRequest, now: () => 1000 })
+    mountedOrders.storeOrders.addOrder({ orderId: 42, orderTrackingToken: 'private-token' })
+
+    await expect(mountedOrders.storeOrders.cancelOrder(42, 'Ya no lo necesito.')).resolves.toBe('cancelled')
+
+    expect(apiRequest.mock.calls).toEqual([
+      ['/orders/current', { orderTrackingToken: 'private-token' }],
+      ['/orders/current/cancellation', {
+        method: 'POST',
+        orderTrackingToken: 'private-token',
+        body: { reason: 'Ya no lo necesito.' }
+      }],
+      ['/orders/current', { orderTrackingToken: 'private-token' }]
+    ])
+    expect(mountedOrders.storeOrders.orders.value[0]).toMatchObject({
+      orderStatus: 'CANCELLED',
+      canCancelOrder: false
+    })
+  })
+
+  it('does not send cancellation if the refreshed order is not cancellable', async () => {
+    const apiRequest = vi.fn().mockResolvedValue({
+      orderId: 42,
+      status: 'PREPARING',
+      canCancelOrder: false
+    })
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', apiRequest, now: () => 1000 })
+    mountedOrders.storeOrders.addOrder({ orderId: 42, orderTrackingToken: 'private-token' })
+
+    await expect(mountedOrders.storeOrders.cancelOrder(42)).resolves.toBe('not-allowed')
+
+    expect(apiRequest).toHaveBeenCalledOnce()
+  })
+
+  it('does not cancel when preparation has started even if the API flag is true', async () => {
+    const apiRequest = vi.fn().mockResolvedValue({
+      orderId: 42,
+      status: 'PREPARING',
+      canCancelOrder: true
+    })
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', apiRequest, now: () => 1000 })
+    mountedOrders.storeOrders.addOrder({ orderId: 42, orderTrackingToken: 'private-token' })
+
+    await expect(mountedOrders.storeOrders.cancelOrder(42)).resolves.toBe('not-allowed')
+
+    expect(apiRequest).toHaveBeenCalledOnce()
+  })
+
+  it('changes payment method using the tracking token and refreshes the canonical order', async () => {
+    const apiRequest = vi.fn()
+      .mockResolvedValueOnce({
+        orderId: 42,
+        status: 'PENDING_PAYMENT',
+        paymentProvider: 'MERCADO_PAGO',
+        paymentStatus: 'PENDING',
+        mercadoPagoCheckoutUrl: 'https://www.mercadopago.com/old',
+        canChangePaymentMethod: true,
+        availablePaymentMethodChanges: [{ provider: 'TRANSFER', label: 'Transferencia' }]
+      })
+      .mockResolvedValueOnce({ orderId: 42, paymentProvider: 'TRANSFER' })
+      .mockResolvedValueOnce({
+        orderId: 42,
+        status: 'AWAITING_PAYMENT_PROOF',
+        paymentProvider: 'TRANSFER',
+        paymentStatus: 'PENDING',
+        transferAlias: 'tienda.alias',
+        transferAccountHolder: 'Mi Tienda',
+        canChangePaymentMethod: false,
+        availablePaymentMethodChanges: []
+      })
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', apiRequest, now: () => 1000 })
+    mountedOrders.storeOrders.addOrder({ orderId: 42, orderTrackingToken: 'private-token' })
+
+    await expect(mountedOrders.storeOrders.changePaymentMethod(42, 'TRANSFER')).resolves.toBe('changed')
+
+    expect(apiRequest.mock.calls).toEqual([
+      ['/orders/current', { orderTrackingToken: 'private-token' }],
+      ['/orders/current/payment-method', {
+        method: 'PUT',
+        orderTrackingToken: 'private-token',
+        body: { paymentProvider: 'TRANSFER' }
+      }],
+      ['/orders/current', { orderTrackingToken: 'private-token' }]
+    ])
+    expect(mountedOrders.storeOrders.orders.value[0]).toMatchObject({
+      orderStatus: 'AWAITING_PAYMENT_PROOF',
+      paymentProvider: 'TRANSFER',
+      transferAlias: 'tienda.alias',
+      transferAccountHolder: 'Mi Tienda',
+      mercadoPagoCheckoutUrl: null,
+      canChangePaymentMethod: false,
+      availablePaymentMethodChanges: []
+    })
+  })
+
+  it('refreshes payment options after the selected method becomes unavailable', async () => {
+    const apiRequest = vi.fn()
+      .mockResolvedValueOnce({
+        orderId: 42,
+        status: 'PENDING_PAYMENT',
+        paymentProvider: 'MERCADO_PAGO',
+        canChangePaymentMethod: true,
+        availablePaymentMethodChanges: [{ provider: 'TRANSFER', label: 'Transferencia' }]
+      })
+      .mockRejectedValueOnce(Object.assign(new Error('unavailable'), {
+        status: 422,
+        code: 'payment_method_unavailable'
+      }))
+      .mockResolvedValueOnce({
+        orderId: 42,
+        status: 'PENDING_PAYMENT',
+        paymentProvider: 'MERCADO_PAGO',
+        canChangePaymentMethod: true,
+        availablePaymentMethodChanges: [{ provider: 'CASH', label: 'Efectivo' }]
+      })
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', apiRequest, now: () => 1000 })
+
+    mountedOrders.storeOrders.addOrder({ orderId: 42, orderTrackingToken: 'private-token' })
+
+    await expect(mountedOrders.storeOrders.changePaymentMethod(42, 'TRANSFER')).resolves.toBe('option-unavailable')
+
+    expect(mountedOrders.storeOrders.orders.value[0].availablePaymentMethodChanges)
+      .toEqual([{ provider: 'CASH', label: 'Efectivo' }])
+  })
+
+  it('refreshes and reports a cancellation deadline conflict', async () => {
+    const apiRequest = vi.fn()
+      .mockResolvedValueOnce({ orderId: 42, status: 'CONFIRMED', canCancelOrder: true })
+      .mockRejectedValueOnce(Object.assign(new Error('conflict'), {
+        status: 409,
+        code: 'customer_cancellation_not_allowed'
+      }))
+      .mockResolvedValueOnce({ orderId: 42, status: 'PREPARING', canCancelOrder: false })
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', apiRequest, now: () => 1000 })
+    mountedOrders.storeOrders.addOrder({ orderId: 42, orderTrackingToken: 'private-token' })
+
+    await expect(mountedOrders.storeOrders.cancelOrder(42)).resolves.toBe('not-allowed')
+
+    expect(apiRequest).toHaveBeenCalledTimes(3)
+    expect(mountedOrders.storeOrders.orders.value[0]).toMatchObject({
+      orderStatus: 'PREPARING',
+      canCancelOrder: false
+    })
+  })
+
+  it('removes the local order if cancellation returns 404', async () => {
+    const apiRequest = vi.fn()
+      .mockResolvedValueOnce({ orderId: 42, status: 'CONFIRMED', canCancelOrder: true })
+      .mockRejectedValueOnce(Object.assign(new Error('not found'), { status: 404 }))
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', apiRequest, now: () => 1000 })
+    mountedOrders.storeOrders.addOrder({ orderId: 42, orderTrackingToken: 'private-token' })
+
+    await expect(mountedOrders.storeOrders.cancelOrder(42)).resolves.toBe('unavailable')
+
+    expect(mountedOrders.storeOrders.orders.value).toEqual([])
+    expect(JSON.parse(localStorage.getItem('vitrinapp-orders-almacen-demo'))).toEqual([])
+  })
+
   it('stores the status timeline returned by the tracking endpoint', async () => {
     const statusTimeline = [
       { code: 'PENDING_AVAILABILITY', label: 'Pendiente de confirmación', state: 'COMPLETED' },
@@ -95,7 +275,8 @@ describe('useStoreOrders', () => {
     mountedOrders.storeOrders.addOrder({ orderId: 42, orderTrackingToken: 'private-token' })
 
     await expect(mountedOrders.storeOrders.syncOrder(42)).resolves.toBe('error')
-    expect(mountedOrders.storeOrders.orderErrors[42]).toBe('boom')
+    expect(mountedOrders.storeOrders.orderErrors[42])
+      .toBe('No se pudo actualizar el estado del pedido. Revisá tu conexión e intentá nuevamente.')
     expect(mountedOrders.storeOrders.orders.value).toHaveLength(1)
   })
 
