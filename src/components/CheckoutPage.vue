@@ -1,7 +1,7 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { requestStoreApi } from '../api/store.js'
-import { STORE_SLUG } from '../config/store.js'
+import { buildStorePath, STORE_SLUG } from '../config/store.js'
 import { useOrderTracking } from '../composables/useOrderTracking.js'
 import { canUploadTransferProof } from '../utils/canUploadTransferProof.js'
 import { formatCurrency } from '../utils/formatCurrency.js'
@@ -43,6 +43,7 @@ const props = defineProps({
   orders: { type: Array, default: () => [] },
   trackedOrderId: { type: [String, Number], default: null },
   requestedOrderId: { type: String, default: '' },
+  loadOrderById: { type: Function, default: async () => 'unavailable' },
   cancelOrder: { type: Function, required: true },
   changePaymentMethod: { type: Function, required: true },
   removeOrder: { type: Function, required: true },
@@ -57,12 +58,15 @@ const props = defineProps({
 const emit = defineEmits(['back', 'complete'])
 
 const trackingOnly = props.trackedOrderId !== null || Boolean(props.requestedOrderId)
-const activeOrderId = ref(props.trackedOrderId)
-const trackedOrder = computed(() => props.orders.find((order) => order.orderId === activeOrderId.value))
+const activeOrderId = ref(props.trackedOrderId ?? props.requestedOrderId ?? null)
+const trackedOrder = computed(() => props.orders.find((order) =>
+  String(order.orderId) === String(activeOrderId.value)))
 const trackedOrderItems = computed(() => readOrderItems(trackedOrder.value))
 const trackedOrderStatus = computed(() => String(trackedOrder.value?.orderStatus ?? '').trim().toUpperCase())
-const canDeleteTrackedOrder = computed(() => ['CANCELLED', 'CANCELED'].includes(trackedOrderStatus.value))
+const canDeleteTrackedOrder = computed(() =>
+  !trackedOrder.value?.shared && ['CANCELLED', 'CANCELED'].includes(trackedOrderStatus.value))
 const canCancelTrackedOrder = computed(() =>
+  !trackedOrder.value?.shared &&
   trackedOrder.value?.canCancelOrder === true &&
   ['PENDING', 'PENDING_AVAILABILITY', 'PENDING_PAYMENT', 'AWAITING_PAYMENT',
     'AWAITING_PAYMENT_PROOF', 'PAYMENT_PROOF_UNDER_REVIEW', 'PAYMENT_UNDER_REVIEW',
@@ -76,7 +80,9 @@ const paymentChangeOptions = computed(() =>
     option.provider !== trackedOrder.value?.paymentProvider &&
     !blockedPaymentProviders.value.has(option.provider)))
 const canChangeTrackedPaymentMethod = computed(() =>
-  trackedOrder.value?.canChangePaymentMethod === true && paymentChangeOptions.value.length > 0)
+  !trackedOrder.value?.shared &&
+  trackedOrder.value?.canChangePaymentMethod === true &&
+  paymentChangeOptions.value.length > 0)
 const confirmingOrderDeletion = ref(false)
 const deletedOrderId = ref(null)
 const confirmingOrderCancellation = ref(false)
@@ -90,6 +96,46 @@ const changingPaymentMethod = ref(false)
 const paymentChangeMessage = ref('')
 const paymentChangeMessageSeverity = ref('error')
 const blockedPaymentProviders = ref(new Set())
+const trackingLinkCopied = ref(false)
+const trackingLinkError = ref('')
+let trackingLinkResetTimer = null
+const trackingLink = computed(() => {
+  if (!trackedOrder.value || typeof window === 'undefined') return ''
+  const url = new URL(window.location.href)
+  url.pathname = buildStorePath(STORE_SLUG)
+  url.search = ''
+  url.searchParams.set('orderId', String(trackedOrder.value.orderId))
+  url.hash = ''
+  return url.toString()
+})
+const copyTrackingLink = async () => {
+  if (!trackingLink.value) return
+  trackingLinkError.value = ''
+  try {
+    if (!navigator.clipboard?.writeText) {
+      throw new Error('Clipboard API unavailable')
+    }
+    await navigator.clipboard.writeText(trackingLink.value)
+    trackingLinkCopied.value = true
+    if (trackingLinkResetTimer) window.clearTimeout(trackingLinkResetTimer)
+    trackingLinkResetTimer = window.setTimeout(() => {
+      trackingLinkCopied.value = false
+      trackingLinkResetTimer = null
+    }, 1000)
+  } catch {
+    trackingLinkError.value = 'No se pudo copiar el enlace. Revisá los permisos del navegador e intentá nuevamente.'
+  }
+}
+const retrySharedOrderLoad = async () => {
+  const result = await props.loadOrderById(props.requestedOrderId)
+  if (result !== 'ok') return
+  const order = props.orders.find((item) =>
+    String(item.orderId) === String(props.requestedOrderId))
+  if (!order) return
+  activeOrderId.value = null
+  await nextTick()
+  activeOrderId.value = order.orderId
+}
 watch(() => trackedOrder.value?.orderStatus, () => {
   if (!canDeleteTrackedOrder.value) confirmingOrderDeletion.value = false
 })
@@ -103,6 +149,9 @@ const { connection, finished: trackingFinished, unavailable: trackingUnavailable
   orderId: () => activeOrderId.value,
   orders: computed(() => props.orders),
   syncOrder: props.syncOrder
+})
+onBeforeUnmount(() => {
+  if (trackingLinkResetTimer) window.clearTimeout(trackingLinkResetTimer)
 })
 const connectionLabel = computed(() => ({
   connected: 'Actualización en tiempo real conectada',
@@ -729,8 +778,20 @@ onMounted(() => {
         El pedido #{{ deletedOrderId }} se eliminó de este navegador.
       </Message>
 
+      <Message
+        v-else-if="requestedOrderId && orderErrors[requestedOrderId]"
+        severity="error"
+        :closable="false"
+        class="tracking-message"
+      >
+        {{ orderErrors[requestedOrderId] }}
+        <Button label="Reintentar" icon="pi pi-refresh" text @click="retrySharedOrderLoad" />
+      </Message>
+
       <Message v-else-if="trackingUnavailable || (!trackedOrder && !orderSaveWarning)" severity="info" :closable="false" class="tracking-message">
-        El seguimiento sólo puede abrirse desde el dispositivo y navegador que creó el pedido. Si necesitás ayuda, contactá al comercio.
+        {{ requestedOrderId
+          ? 'No encontramos un pedido con ese número. Verificá que el enlace sea correcto.'
+          : 'No pudimos acceder al pedido guardado. Si necesitás ayuda, contactá al comercio.' }}
       </Message>
 
       <Message
@@ -752,6 +813,23 @@ onMounted(() => {
           <span class="status-badge" :class="`tone-${getStatusTone(trackedOrder.orderStatus)}`">
             {{ formatOrderStatus(trackedOrder.orderStatus) }}
           </span>
+        </div>
+        <div class="tracked-order-sharing">
+          <Button
+            :label="trackingLinkCopied ? 'Link copiado' : 'Compartir pedido'"
+            :icon="trackingLinkCopied ? 'pi pi-check' : 'pi pi-copy'"
+            severity="secondary"
+            outlined
+            @click="copyTrackingLink"
+          />
+          <Message
+            v-if="trackingLinkError"
+            severity="error"
+            :closable="false"
+            role="status"
+          >
+            {{ trackingLinkError }}
+          </Message>
         </div>
         <div v-if="canDeleteTrackedOrder" class="tracked-order-delete">
           <Button
@@ -958,7 +1036,7 @@ onMounted(() => {
           {{ orderErrors[trackedOrder.orderId] }}
         </Message>
 
-        <div v-if="canUploadTransferProof(trackedOrder)" class="proof-region">
+        <div v-if="trackedOrder.orderTrackingToken && canUploadTransferProof(trackedOrder)" class="proof-region">
           <p v-if="trackedOrder.transferAlias">
             Transferí a <strong>{{ trackedOrder.transferAlias }}</strong>
             <template v-if="trackedOrder.transferAccountHolder">, titular <strong>{{ trackedOrder.transferAccountHolder }}</strong></template>.
@@ -1694,6 +1772,13 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+}
+
+.tracked-order-sharing {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
 }
 
 .tracked-order-delete {

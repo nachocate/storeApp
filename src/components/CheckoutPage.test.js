@@ -119,6 +119,32 @@ describe('CheckoutPage cancelled order removal', () => {
     app.unmount()
   })
 
+  it('copies a shareable order link and shows a temporary confirmation', async () => {
+    const previousClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText }
+    })
+    const { app, container } = render('PREPARING')
+
+    container.querySelector('.tracked-order-sharing button').click()
+    await Promise.resolve()
+    await nextTick()
+
+    expect(writeText).toHaveBeenCalledOnce()
+    expect(writeText.mock.calls[0][0]).toContain('orderId=42')
+    expect(container.querySelector('.tracked-order-sharing button').textContent)
+      .toContain('Link copiado')
+
+    app.unmount()
+    if (previousClipboard) {
+      Object.defineProperty(navigator, 'clipboard', previousClipboard)
+    } else {
+      delete navigator.clipboard
+    }
+  })
+
   it('asks for confirmation and submits an optional cancellation reason only when allowed', async () => {
     const { app, container, cancelOrder } = render('CONFIRMED', { canCancelOrder: true })
 

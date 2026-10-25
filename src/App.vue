@@ -341,6 +341,7 @@ const {
   addOrder: saveStoreOrder,
   cancelOrder: cancelStoreOrder,
   changePaymentMethod: changeStorePaymentMethod,
+  loadOrderById,
   orders,
   orderErrors,
   removeOrder: removeStoreOrder,
@@ -638,6 +639,7 @@ onMounted(async () => {
       String(order.orderId) === mercadoPagoReturnOrderId &&
       order.paymentProvider === 'MERCADO_PAGO')
     if (REQUESTED_ORDER_ID) {
+      await loadOrderById(REQUESTED_ORDER_ID)
       openOrderTracking(REQUESTED_ORDER_ID)
     } else if (returnedOrder) {
       openOrderTracking(String(returnedOrder.orderId))
@@ -831,6 +833,7 @@ onBeforeUnmount(() => {
         :orders="orders"
         :tracked-order-id="trackedOrderId"
         :requested-order-id="trackingFromUrl ? REQUESTED_ORDER_ID : ''"
+        :load-order-by-id="loadOrderById"
         :cancel-order="cancelStoreOrder"
         :change-payment-method="changeStorePaymentMethod"
         :remove-order="removeStoreOrder"

@@ -69,17 +69,19 @@ export const useOrderTracking = ({
     if (currentGeneration !== generation || unavailable.value) return
 
     const trackingToken = record.orderTrackingToken
-    unsubscribe = subscribe({
-      trackingToken,
-      onOrderUpdated: refresh,
-      onFatalError: () => {
-        unavailable.value = true
-        stop()
-      },
-      onConnectionState: (state) => {
-        if (currentGeneration === generation) connection.value = state
-      }
-    })
+    if (trackingToken) {
+      unsubscribe = subscribe({
+        trackingToken,
+        onOrderUpdated: refresh,
+        onFatalError: () => {
+          unavailable.value = true
+          stop()
+        },
+        onConnectionState: (state) => {
+          if (currentGeneration === generation) connection.value = state
+        }
+      })
+    }
     // Moderate polling is only a fallback for networks that block the stream.
     pollTimer = window.setInterval(() => {
       if (connection.value !== 'connected') void refresh()

@@ -49,7 +49,9 @@ export const useStoreOrders = ({
   const persistOrders = () => {
     if (typeof window === 'undefined') return false
     try {
-      window.localStorage.setItem(storageKey, JSON.stringify(orders.value))
+      window.localStorage.setItem(storageKey, JSON.stringify(
+        orders.value.filter((order) => !order.shared)
+      ))
       return true
     } catch {
       return false
@@ -113,7 +115,7 @@ export const useStoreOrders = ({
   }
 
   const removeOrder = (orderId) => {
-    orders.value = orders.value.filter((order) => order.orderId !== orderId)
+    orders.value = orders.value.filter((order) => String(order.orderId) !== String(orderId))
     delete orderErrors[orderId]
     delete transferErrors[orderId]
     delete transferSuccess[orderId]
@@ -121,54 +123,101 @@ export const useStoreOrders = ({
     persistOrders()
   }
 
+  const normalizeTrackedOrder = (current, orderId, { shared = false } = {}) => {
+    if (String(current?.orderId) !== String(orderId)) return null
+    const orderStatus = current.status ?? current.orderStatus
+    if (orderStatus === 'COMPLETED') return { orderStatus, completed: true }
+    const items = readOrderItems(current)
+
+    return {
+      orderId: current.orderId,
+      ...(shared ? { shared: true } : {}),
+      orderStatus,
+      ...(items.length ? { items } : {}),
+      paymentProvider: current.paymentProvider ?? null,
+      paymentStatus: current.paymentStatus ?? null,
+      mercadoPagoCheckoutUrl: shared ? null : current.mercadoPagoCheckoutUrl ?? null,
+      fulfillmentType: current.fulfillmentType ?? null,
+      totalAmount: current.totalAmount ?? null,
+      currency: current.currency ?? null,
+      createdAt: current.createdAt ?? null,
+      scheduledDate: current.scheduledDate ?? null,
+      scheduledStartsAt: current.scheduledStartsAt ?? null,
+      scheduledEndsAt: current.scheduledEndsAt ?? null,
+      transferAlias: shared ? null : current.transferAlias ?? null,
+      transferAccountHolder: shared ? null : current.transferAccountHolder ?? null,
+      canCancelOrder: !shared && current.canCancelOrder === true,
+      cancellationDeadline: shared ? null : current.cancellationDeadline ?? null,
+      canChangePaymentMethod: !shared && current.canChangePaymentMethod === true,
+      availablePaymentMethodChanges: shared
+        ? []
+        : normalizePaymentMethodChanges(current.availablePaymentMethodChanges),
+      statusTimeline: normalizeStatusTimeline(current.statusTimeline)
+    }
+  }
+
+  const loadOrderById = async (orderId) => {
+    const existingOrder = orders.value.find((item) => String(item.orderId) === String(orderId))
+    if (existingOrder && existingOrder.orderTrackingToken) return 'ok'
+    if (orderId === undefined || orderId === null || !String(orderId).trim()) return 'unavailable'
+
+    try {
+      const payload = await apiRequest(`/orders/${encodeURIComponent(String(orderId))}`)
+      const current = payload?.order ?? payload?.data?.order ?? payload?.data ?? payload
+      const order = normalizeTrackedOrder(current, orderId, { shared: true })
+      if (!order) return 'unavailable'
+      const sharedOrder = {
+        orderId: current.orderId,
+        ...order,
+        items: order.items ?? [],
+        expiresAt: undefined
+      }
+      orders.value = [
+        sharedOrder,
+        ...orders.value.filter((item) => String(item.orderId) !== String(orderId))
+      ]
+      delete orderErrors[orderId]
+      return 'ok'
+    } catch (error) {
+      if (error.status === 404) return 'unavailable'
+      orderErrors[orderId] = 'No se pudo cargar el pedido. Revisá tu conexión e intentá nuevamente.'
+      return 'error'
+    }
+  }
+
   // Used by the tracking view: keeps finished orders visible and reports lost access explicitly.
   const syncOrder = async (orderId) => {
-    const order = orders.value.find((item) => item.orderId === orderId)
-    if (!order || Number(order.expiresAt) <= now()) {
+    const order = orders.value.find((item) => String(item.orderId) === String(orderId))
+    if (!order || (order.expiresAt && Number(order.expiresAt) <= now())) {
       if (order) removeOrder(orderId)
       return 'unavailable'
     }
 
     try {
-      const current = await apiRequest('/orders/current', {
-        orderTrackingToken: order.orderTrackingToken
+      const current = order.orderTrackingToken
+        ? await apiRequest('/orders/current', {
+          orderTrackingToken: order.orderTrackingToken
+        })
+        : await apiRequest(`/orders/${encodeURIComponent(String(orderId))}`)
+      const normalizedOrder = normalizeTrackedOrder(current?.order ?? current?.data?.order ?? current?.data ?? current, orderId, {
+        shared: order.shared
       })
-      if (String(current.orderId) !== String(orderId)) {
+      if (!normalizedOrder) {
         removeOrder(orderId)
         return 'unavailable'
       }
-      const orderStatus = current.status ?? current.orderStatus
-      if (orderStatus === 'COMPLETED') {
+      if (normalizedOrder.completed) {
         removeOrder(orderId)
         return 'completed'
       }
-      const currentItems = readOrderItems(current)
-      Object.assign(order, {
-        orderStatus,
-        ...(currentItems.length ? { items: currentItems } : {}),
-        paymentProvider: current.paymentProvider ?? null,
-        paymentStatus: current.paymentStatus ?? null,
-        mercadoPagoCheckoutUrl: current.mercadoPagoCheckoutUrl ?? null,
-        fulfillmentType: current.fulfillmentType ?? null,
-        totalAmount: current.totalAmount ?? null,
-        currency: current.currency ?? null,
-        createdAt: current.createdAt ?? null,
-        scheduledDate: current.scheduledDate ?? null,
-        scheduledStartsAt: current.scheduledStartsAt ?? null,
-        scheduledEndsAt: current.scheduledEndsAt ?? null,
-        transferAlias: current.transferAlias ?? null,
-        transferAccountHolder: current.transferAccountHolder ?? null,
-        canCancelOrder: current.canCancelOrder === true,
-        cancellationDeadline: current.cancellationDeadline ?? null,
-        canChangePaymentMethod: current.canChangePaymentMethod === true,
-        availablePaymentMethodChanges: normalizePaymentMethodChanges(current.availablePaymentMethodChanges),
-        statusTimeline: normalizeStatusTimeline(current.statusTimeline)
-      })
+      const { items, ...updatedFields } = normalizedOrder
+      Object.assign(order, updatedFields)
+      if (items?.length) order.items = items
       delete orderErrors[orderId]
       persistOrders()
       return 'ok'
     } catch (error) {
-      if (error.status === 401 || error.status === 404) {
+      if (error.status === 404 || (error.status === 401 && order.orderTrackingToken)) {
         removeOrder(orderId)
         return 'unavailable'
       }
@@ -299,6 +348,7 @@ export const useStoreOrders = ({
     addOrder,
     cancelOrder,
     changePaymentMethod,
+    loadOrderById,
     orderErrors,
     orders,
     syncOrder,
