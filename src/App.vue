@@ -14,6 +14,7 @@ import { IS_ENVIRONMENT_MISMATCH, IS_HOME, REQUESTED_ORDER_ID, STORE_SLUG, build
 import { useVisitorCart } from './composables/useVisitorCart.js'
 import { useStoreOrders } from './composables/useStoreOrders.js'
 import { resolveStoreAssetUrl } from './utils/resolveStoreAssetUrl.js'
+import { takeMercadoPagoReturnOrderId } from './utils/mercadoPagoReturn.js'
 import { readQuantityRules } from './utils/quantityRules.js'
 import { isValidEmail } from './utils/invoiceData.js'
 import { isStoreCurrentlyOpen, normalizeWeeklyHours } from './utils/storeHours.js'
@@ -632,7 +633,15 @@ onMounted(async () => {
     await initializeCart()
     await ensureSelectedProduct()
     await loadDeliveryAvailability()
-    if (REQUESTED_ORDER_ID) openOrderTracking(REQUESTED_ORDER_ID)
+    const mercadoPagoReturnOrderId = takeMercadoPagoReturnOrderId(STORE_SLUG)
+    const returnedOrder = orders.value.find((order) =>
+      String(order.orderId) === mercadoPagoReturnOrderId &&
+      order.paymentProvider === 'MERCADO_PAGO')
+    if (REQUESTED_ORDER_ID) {
+      openOrderTracking(REQUESTED_ORDER_ID)
+    } else if (returnedOrder) {
+      openOrderTracking(String(returnedOrder.orderId))
+    }
   }
 })
 

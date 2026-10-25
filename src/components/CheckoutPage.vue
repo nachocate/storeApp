@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { requestStoreApi } from '../api/store.js'
+import { STORE_SLUG } from '../config/store.js'
 import { useOrderTracking } from '../composables/useOrderTracking.js'
 import { canUploadTransferProof } from '../utils/canUploadTransferProof.js'
 import { formatCurrency } from '../utils/formatCurrency.js'
@@ -23,6 +24,9 @@ import {
   isPendingMercadoPagoOrder,
   resolveMercadoPagoCheckoutUrl
 } from '../utils/mercadoPagoCheckout.js'
+import { normalizeCheckoutOrder } from '../utils/normalizeCheckoutOrder.js'
+import { rememberMercadoPagoReturn } from '../utils/mercadoPagoReturn.js'
+import { readOrderItems, snapshotOrderItems } from '../utils/orderItems.js'
 
 const props = defineProps({
   items: { type: Array, required: true },
@@ -55,6 +59,7 @@ const emit = defineEmits(['back', 'complete'])
 const trackingOnly = props.trackedOrderId !== null || Boolean(props.requestedOrderId)
 const activeOrderId = ref(props.trackedOrderId)
 const trackedOrder = computed(() => props.orders.find((order) => order.orderId === activeOrderId.value))
+const trackedOrderItems = computed(() => readOrderItems(trackedOrder.value))
 const trackedOrderStatus = computed(() => String(trackedOrder.value?.orderStatus ?? '').trim().toUpperCase())
 const canDeleteTrackedOrder = computed(() => ['CANCELLED', 'CANCELED'].includes(trackedOrderStatus.value))
 const canCancelTrackedOrder = computed(() =>
@@ -215,7 +220,9 @@ const changeTrackedPaymentMethod = async () => {
       unchanged: 'El pedido ya usa ese medio de pago. Actualizamos su estado.',
       unavailable: 'No pudimos recuperar el pedido. Se quitó el acceso guardado en este navegador.',
       unconfirmed: 'El cambio se envió, pero no pudimos actualizar el estado. Revisá el seguimiento; no repitas el cambio hasta confirmar el medio vigente.',
-      error: 'No se pudo cambiar el medio de pago. Revisá tu conexión e intentá nuevamente.',
+      rejected: 'La API no aceptó el cambio de medio de pago. El pedido sigue con el medio indicado en el seguimiento.',
+      retryable: 'No pudimos confirmar el cambio. El pedido sigue con el medio indicado en el seguimiento; podés volver a intentarlo.',
+      error: 'No se pudo actualizar el pedido. Revisá el seguimiento antes de volver a intentarlo.',
       'invalid-option': 'Esa alternativa no está disponible para este pedido.'
     }
     if (result === 'invalid-request') {
@@ -224,7 +231,7 @@ const changeTrackedPaymentMethod = async () => {
         selectedPaymentProvider.value
       ])
     }
-    paymentChangeMessageSeverity.value = result === 'option-unavailable' ? 'warn' : 'error'
+    paymentChangeMessageSeverity.value = ['option-unavailable', 'retryable'].includes(result) ? 'warn' : 'error'
     paymentChangeMessage.value = messages[result] ?? messages.error
     selectedPaymentProvider.value = ''
     if (['invalid-request', 'not-allowed', 'unchanged', 'unavailable'].includes(result)) {
@@ -232,7 +239,7 @@ const changeTrackedPaymentMethod = async () => {
     }
   } catch {
     paymentChangeMessageSeverity.value = 'error'
-    paymentChangeMessage.value = 'No se pudo cambiar el medio de pago. Revisá tu conexión e intentá nuevamente.'
+    paymentChangeMessage.value = 'No se pudo actualizar el pedido. Revisá el seguimiento antes de volver a intentarlo.'
   } finally {
     changingPaymentMethod.value = false
   }
@@ -473,6 +480,7 @@ watch(() => form.fulfillmentDate, (date) => {
 const redirectToMercadoPago = () => {
   if (!mercadoPagoCheckoutUrl.value || paymentRedirectStarted) return
   paymentRedirectStarted = true
+  rememberMercadoPagoReturn(STORE_SLUG, savedOrder.value?.orderId)
   window.location.assign(mercadoPagoCheckoutUrl.value)
 }
 
@@ -609,7 +617,12 @@ const confirmOrder = async () => {
     return
   }
 
-  const order = result?.order ?? result?.data?.order ?? result
+  const { order: responseOrder, mercadoPagoCheckoutUrl: checkoutPaymentUrl } = normalizeCheckoutOrder(result)
+  const responseItems = readOrderItems(responseOrder)
+  const order = {
+    ...responseOrder,
+    items: responseItems.length ? responseItems : snapshotOrderItems(props.items)
+  }
   checkoutResult.value = result
   savedOrder.value = order
   orderReference.value = order?.orderId ?? 'Pedido registrado'
@@ -624,9 +637,7 @@ const confirmOrder = async () => {
     } else {
       try {
         const paymentUrl = resolveMercadoPagoCheckoutUrl(
-          result?.mercadoPagoCheckoutUrl ??
-          result?.data?.mercadoPagoCheckoutUrl ??
-          order?.mercadoPagoCheckoutUrl
+          checkoutPaymentUrl
         )
         if (!paymentUrl) {
           paymentLinkError.value = 'El pedido quedó pendiente de pago, pero la API no devolvió el enlace de Mercado Pago. No vuelvas a confirmar el checkout; consultá el seguimiento o contactá a la tienda.'
@@ -846,6 +857,22 @@ onMounted(() => {
             <dd>{{ describePaymentProvider(trackedOrder.paymentProvider).label }}</dd>
           </div>
         </dl>
+
+        <section class="tracked-order-items" aria-labelledby="tracked-order-items-title">
+          <h2 id="tracked-order-items-title">Productos del pedido</h2>
+          <ul v-if="trackedOrderItems.length">
+            <li v-for="(item, index) in trackedOrderItems" :key="`${item.name}-${item.variantLabel}-${index}`">
+              <div>
+                <strong>{{ item.name }}</strong>
+                <small v-if="item.variantLabel">{{ item.variantLabel }}</small>
+              </div>
+              <span>{{ formatQuantityWithUnit(item.quantity, item) }}</span>
+            </li>
+          </ul>
+          <p v-else class="tracked-order-items-empty">
+            El detalle de productos no está disponible para este pedido.
+          </p>
+        </section>
 
         <div v-if="canChangeTrackedPaymentMethod" class="payment-method-change">
           <p>
@@ -1803,6 +1830,54 @@ onMounted(() => {
 }
 
 .payment-change-message {
+  margin: 0;
+}
+
+.tracked-order-items {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.tracked-order-items h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.tracked-order-items ul {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tracked-order-items li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--secondary-color) 35%, #fff);
+}
+
+.tracked-order-items li > div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.tracked-order-items li small,
+.tracked-order-items-empty {
+  color: #647167;
+  font-size: 0.85rem;
+}
+
+.tracked-order-items li > span {
+  flex: 0 0 auto;
+  font-weight: 700;
+}
+
+.tracked-order-items-empty {
   margin: 0;
 }
 

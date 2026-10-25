@@ -85,4 +85,27 @@ describe('requestStoreApi', () => {
     expect(options.body).toBe(JSON.stringify({ paymentProvider: 'TRANSFER' }))
     expect(url).not.toContain('private-order-token')
   })
+
+  it('extracts API error codes from nested error payloads', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        error: {
+          code: 'payment_method_change_not_allowed',
+          message: 'Order status changed'
+        }
+      })
+    }))
+
+    await expect(requestStoreApi('/orders/current/payment-method', {
+      method: 'PUT',
+      orderTrackingToken: 'private-order-token',
+      body: { paymentProvider: 'TRANSFER' }
+    })).rejects.toMatchObject({
+      status: 409,
+      code: 'payment_method_change_not_allowed',
+      message: 'Order status changed'
+    })
+  })
 })

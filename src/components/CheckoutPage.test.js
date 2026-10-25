@@ -100,6 +100,25 @@ describe('CheckoutPage cancelled order removal', () => {
     app.unmount()
   })
 
+  it('shows product names, variants and quantities in order tracking', () => {
+    const { app, container } = render('PREPARING', {
+      items: [{
+        name: 'Café',
+        variantLabel: 'Molido',
+        quantity: 0.5,
+        unitSymbol: 'kg',
+        decimalScale: 3
+      }]
+    })
+
+    const details = container.querySelector('.tracked-order-items')
+    expect(details.textContent).toContain('Café')
+    expect(details.textContent).toContain('Molido')
+    expect(details.textContent).toContain('500 g')
+
+    app.unmount()
+  })
+
   it('asks for confirmation and submits an optional cancellation reason only when allowed', async () => {
     const { app, container, cancelOrder } = render('CONFIRMED', { canCancelOrder: true })
 

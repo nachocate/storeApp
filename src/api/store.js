@@ -38,8 +38,16 @@ export const requestStoreApi = async (path, {
     let errorCode
     try {
       const payload = await response.json()
-      message = payload.message ?? payload.error ?? message
-      errorCode = payload.code ?? payload.error
+      const errorPayload = payload?.error && typeof payload.error === 'object'
+        ? payload.error
+        : payload?.data?.error && typeof payload.data.error === 'object'
+          ? payload.data.error
+          : payload?.data ?? payload
+      message = errorPayload?.message ?? payload?.message ??
+        (typeof payload?.error === 'string' ? payload.error : message)
+      errorCode = errorPayload?.code ?? errorPayload?.errorCode ??
+        payload?.code ?? payload?.errorCode ??
+        (typeof payload?.error === 'string' ? payload.error : undefined)
     } catch {
       // The response may not contain JSON.
     }

@@ -2,6 +2,7 @@ import { ref, reactive } from 'vue'
 import { requestStoreApi } from '../api/store.js'
 import { STORE_SLUG } from '../config/store.js'
 import { normalizeStatusTimeline } from '../utils/orderStatusStyles.js'
+import { normalizeOrderItems, readOrderItems } from '../utils/orderItems.js'
 
 const ORDER_TTL_MS = 30 * 24 * 60 * 60 * 1000
 const MAX_PROOF_SIZE = 5 * 1024 * 1024
@@ -87,6 +88,7 @@ export const useStoreOrders = ({
       orderId: order.orderId,
       orderTrackingToken: order.orderTrackingToken,
       orderStatus: order.orderStatus ?? order.status,
+      items: normalizeOrderItems(order.items),
       paymentProvider: order.paymentProvider,
       paymentStatus: order.paymentStatus,
       mercadoPagoCheckoutUrl: order.mercadoPagoCheckoutUrl ?? null,
@@ -140,8 +142,10 @@ export const useStoreOrders = ({
         removeOrder(orderId)
         return 'completed'
       }
+      const currentItems = readOrderItems(current)
       Object.assign(order, {
         orderStatus,
+        ...(currentItems.length ? { items: currentItems } : {}),
         paymentProvider: current.paymentProvider ?? null,
         paymentStatus: current.paymentStatus ?? null,
         mercadoPagoCheckoutUrl: current.mercadoPagoCheckoutUrl ?? null,
@@ -213,7 +217,9 @@ export const useStoreOrders = ({
         return refreshStatus === 'ok' ? 'option-unavailable' : refreshStatus
       }
       const refreshStatus = await syncOrder(orderId)
-      return refreshStatus === 'error' ? 'unconfirmed' : 'error'
+      if (refreshStatus !== 'ok') return refreshStatus === 'error' ? 'unconfirmed' : refreshStatus
+      if (order.paymentProvider === paymentProvider) return 'changed'
+      return error.status ? 'rejected' : 'retryable'
     }
 
     const refreshStatus = await syncOrder(orderId)

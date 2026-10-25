@@ -41,6 +41,31 @@ describe('useStoreOrders', () => {
     expect(mountedOrders.storeOrders.orders.value[0].expiresAt).toBe(1000 + 30 * 24 * 60 * 60 * 1000)
   })
 
+  it('persists a normalized order product snapshot', () => {
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', now: () => 1000 })
+    mountedOrders.storeOrders.addOrder({
+      orderId: 42,
+      orderTrackingToken: 'private-token',
+      items: [{
+        name: 'Café',
+        variantLabel: 'Molido',
+        quantity: 2,
+        unitSymbol: 'u',
+        decimalScale: 0
+      }]
+    })
+
+    expect(mountedOrders.storeOrders.orders.value[0].items).toEqual([{
+      name: 'Café',
+      variantLabel: 'Molido',
+      quantity: 2,
+      unitSymbol: 'u',
+      decimalScale: 0
+    }])
+    expect(JSON.parse(localStorage.getItem('vitrinapp-orders-almacen-demo'))[0].items[0].name)
+      .toBe('Café')
+  })
+
   it('requires an order id to associate the tracking token with the order', () => {
     mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', now: () => 1000 })
 
@@ -222,6 +247,30 @@ describe('useStoreOrders', () => {
       .toEqual([{ provider: 'CASH', label: 'Efectivo' }])
   })
 
+  it('recognizes a payment change completed despite a failed response', async () => {
+    const apiRequest = vi.fn()
+      .mockResolvedValueOnce({
+        orderId: 42,
+        status: 'PENDING_PAYMENT',
+        paymentProvider: 'MERCADO_PAGO',
+        canChangePaymentMethod: true,
+        availablePaymentMethodChanges: [{ provider: 'TRANSFER', label: 'Transferencia' }]
+      })
+      .mockRejectedValueOnce(new Error('response connection lost'))
+      .mockResolvedValueOnce({
+        orderId: 42,
+        status: 'AWAITING_PAYMENT_PROOF',
+        paymentProvider: 'TRANSFER',
+        canChangePaymentMethod: false,
+        availablePaymentMethodChanges: []
+      })
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', apiRequest, now: () => 1000 })
+    mountedOrders.storeOrders.addOrder({ orderId: 42, orderTrackingToken: 'private-token' })
+
+    await expect(mountedOrders.storeOrders.changePaymentMethod(42, 'TRANSFER')).resolves.toBe('changed')
+    expect(mountedOrders.storeOrders.orders.value[0].paymentProvider).toBe('TRANSFER')
+  })
+
   it('refreshes and reports a cancellation deadline conflict', async () => {
     const apiRequest = vi.fn()
       .mockResolvedValueOnce({ orderId: 42, status: 'CONFIRMED', canCancelOrder: true })
@@ -267,6 +316,30 @@ describe('useStoreOrders', () => {
     await expect(mountedOrders.storeOrders.syncOrder(42)).resolves.toBe('ok')
 
     expect(mountedOrders.storeOrders.orders.value[0].statusTimeline).toEqual(statusTimeline)
+  })
+
+  it('uses canonical order items from tracking when available', async () => {
+    const apiRequest = vi.fn().mockResolvedValue({
+      orderId: 42,
+      status: 'PREPARING',
+      items: [{ productName: 'Yerba', quantity: 2, unitSymbol: 'kg' }]
+    })
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', apiRequest, now: () => 1000 })
+    mountedOrders.storeOrders.addOrder({
+      orderId: 42,
+      orderTrackingToken: 'private-token',
+      items: [{ name: 'Yerba antigua', quantity: 1 }]
+    })
+
+    await expect(mountedOrders.storeOrders.syncOrder(42)).resolves.toBe('ok')
+
+    expect(mountedOrders.storeOrders.orders.value[0].items).toEqual([{
+      name: 'Yerba',
+      variantLabel: '',
+      quantity: 2,
+      unitSymbol: 'kg',
+      decimalScale: 0
+    }])
   })
 
   it('keeps the order and exposes an error on transient failures', async () => {
