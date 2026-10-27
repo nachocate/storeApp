@@ -748,9 +748,12 @@ const selectedVariantId = ref(null)
 watch(selectedProductId, () => {
   selectedVariantId.value = null
 })
-watch(selectedProductId, (productId) => {
+watch([selectedProductId, checkoutOpen], ([productId, isCheckoutOpen]) => {
   if (typeof document !== 'undefined') {
-    document.documentElement.classList.toggle('product-page-open', Boolean(productId))
+    document.documentElement.classList.toggle(
+      'product-page-open',
+      Boolean(productId) && !isCheckoutOpen
+    )
   }
 }, { immediate: true })
 const productPageLoading = ref(false)

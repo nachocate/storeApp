@@ -1825,7 +1825,18 @@ onMounted(() => {
 .tracked-order-action-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  align-items: start;
   gap: 0.75rem;
+}
+
+@media (min-width: 31rem) {
+  .tracked-order-action-grid:has(.tracked-order-cancellation-confirmation) {
+    grid-auto-flow: row dense;
+  }
+
+  .tracked-order-cancellation:has(.tracked-order-cancellation-confirmation) {
+    grid-row: span 2;
+  }
 }
 
 .tracked-order-action {
