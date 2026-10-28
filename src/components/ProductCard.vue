@@ -1,6 +1,6 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
-import { formatCurrency } from '../utils/formatCurrency.js'
+import { ref, watch } from 'vue'
+import { useProductCard } from '../composables/useProductCard.js'
 import ProductActions from './ProductActions.vue'
 
 const props = defineProps({
@@ -24,45 +24,14 @@ watch(() => props.product.image, () => {
   imageFailed.value = false
 })
 
-const availableVariants = computed(() =>
-  (props.product.variantConfiguration?.variants ?? []).filter((variant) => variant.available)
-)
-const singleAvailableVariant = computed(() =>
-  availableVariants.value.length === 1 ? availableVariants.value[0] : null
-)
-const actionProduct = computed(() => ({
-  ...props.product,
-  isSoldOut: props.product.productType === 'VARIANT'
-    ? availableVariants.value.length === 0
-    : props.product.isSoldOut
-}))
-const actionUnavailable = computed(() =>
-  props.product.productType === 'VARIANT' && availableVariants.value.length === 0
-    ? false
-    : props.unavailable
-)
-const variantLabel = computed(() => {
-  const variant = singleAvailableVariant.value
-  if (!variant) return ''
-
-  return variant.label || (variant.selections ?? [])
-    .map(({ optionName, value }) => `${optionName}: ${value}`)
-    .join(' | ')
-})
-
-const unitPriceLabel = computed(() => {
-  if (props.product.productType !== 'VARIANT') {
-    return `${formatCurrency(props.product.pricePerType, props.product.currency)} / ${props.product.unitSymbol ?? 'u'}`
-  }
-
-  const availablePrices = availableVariants.value
-    .map((variant) => Number(variant.pricePerUnit))
-    .filter(Number.isFinite)
-  if (availablePrices.length === 0) return 'Agotado'
-
-  const price = formatCurrency(Math.min(...availablePrices), props.product.currency)
-  return `${availablePrices.length === 1 ? '' : 'Desde '}${price} / ${props.product.unitSymbol ?? 'u'}`
-})
+const {
+  actionProduct,
+  actionUnavailable,
+  availableVariants,
+  singleAvailableVariant,
+  unitPriceLabel,
+  variantLabel
+} = useProductCard(() => props.product, () => props.unavailable)
 </script>
 
 <template>
@@ -101,7 +70,7 @@ const unitPriceLabel = computed(() => {
       </div>
       <div class="product-card-actions">
         <p v-if="variantLabel" class="product-variant-label">{{ variantLabel }}</p>
-        <p class="product-prices"><strong>{{ unitPriceLabel }}</strong></p>
+        <p v-if="unitPriceLabel" class="product-prices"><strong>{{ unitPriceLabel }}</strong></p>
 
         <Button
           v-if="product.productType === 'VARIANT' && availableVariants.length > 1"

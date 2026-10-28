@@ -25,22 +25,21 @@ watch(() => [props.inCart, props.busy], ([inCart, busy]) => {
 
 const addAriaLabel = computed(() => props.busy
   ? 'Procesando producto'
-  : props.inCart
-    ? `Añadido ${props.product.name}`
-    : props.product.isSoldOut
-      ? `Agotado ${props.product.name}`
+  : props.unavailable || props.product.isSoldOut
+    ? `No disponible ${props.product.name}`
+    : props.inCart
+      ? `Añadido ${props.product.name}`
       : `Añadir ${props.product.name}`)
 </script>
 
 <template>
-  <p v-if="!storeClosed && unavailable" class="product-unavailable" role="status">No disponible</p>
   <Button
-    v-else-if="!storeClosed && !displayInCart"
+    v-if="!storeClosed && (!displayInCart || unavailable || product.isSoldOut)"
     class="add-to-cart"
     type="button"
-    label="Agregar al carrito"
+    :label="unavailable || product.isSoldOut ? 'No disponible' : 'Agregar al carrito'"
     icon="pi pi-cart-plus"
-    :disabled="busy || locked || product.isSoldOut"
+    :disabled="busy || locked || unavailable || product.isSoldOut"
     :loading="busy"
     loading-icon="pi pi-spin pi-spinner"
     :aria-label="addAriaLabel"
@@ -95,17 +94,6 @@ const addAriaLabel = computed(() => props.busy
     background: color-mix(in srgb, var(--secondary-color) 20%, #fff);
     border: 1px solid color-mix(in srgb, var(--secondary-color) 52%, #fff);
     font-weight: 700;
-  }
-
-  .product-unavailable {
-    margin: auto 0 0;
-    padding: 0.75rem 0.7rem;
-    border: 1px solid color-mix(in srgb, var(--primary-on-background-color, #18251c) 25%, #fff);
-    border-radius: 12px;
-    background: color-mix(in srgb, var(--primary-on-background-color, #18251c) 8%, #fff);
-    color: var(--primary-on-background-color, #18251c);
-    font-weight: 700;
-    text-align: center;
   }
 
   .product-quantity :deep(.p-button) {

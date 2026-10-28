@@ -63,7 +63,7 @@ describe('ProductCard', () => {
     app.unmount()
   })
 
-  it('shows sold-out status when no variants are available', () => {
+  it('shows an unavailable button when no variants are available', () => {
     const { app, container } = render({
       product: {
         id: 'shirt',
@@ -75,8 +75,27 @@ describe('ProductCard', () => {
     })
 
     const button = container.querySelector('.add-to-cart')
-    expect(container.querySelector('.product-prices').textContent).toBe('Agotado')
-    expect(button.textContent).toBe('Agregar al carrito')
+    expect(container.querySelector('.product-prices')).toBeNull()
+    expect(button.textContent).toBe('No disponible')
+    expect(button.disabled).toBe(true)
+    app.unmount()
+  })
+
+  it('shows the same unavailable button for unavailable simple products', () => {
+    const { app, container } = render({
+      product: {
+        id: 'apple',
+        name: 'Manzana',
+        pricePerType: 10,
+        currency: 'ARS',
+        isSoldOut: true
+      },
+      quantityLabel: '1 u',
+      unavailable: true
+    })
+
+    const button = container.querySelector('.add-to-cart')
+    expect(button.textContent).toBe('No disponible')
     expect(button.disabled).toBe(true)
     app.unmount()
   })

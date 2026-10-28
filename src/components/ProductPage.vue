@@ -1,8 +1,9 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { formatCurrency } from '../utils/formatCurrency.js'
 import ProductActions from './ProductActions.vue'
 import ProductGallery from './ProductGallery.vue'
+import { useProductVariants } from '../composables/useProductVariants.js'
 
 const props = defineProps({
   product: { type: Object, default: null },
@@ -21,64 +22,15 @@ const props = defineProps({
 
 const emit = defineEmits(['back', 'retry', 'change-quantity', 'add-to-cart', 'remove-from-cart', 'variant-change'])
 
-const selectedOptions = ref({})
-watch(() => [props.product?.id, props.product?.variantConfiguration?.variants], () => {
-  const firstAvailableVariant = props.product?.variantConfiguration?.variants
-    ?.find((variant) => variant.available)
-  selectedOptions.value = Object.fromEntries(
-    firstAvailableVariant?.selections.map(({ optionName, value }) => [optionName, value]) ?? []
-  )
-}, { immediate: true })
-
-const variantOptions = computed(() => props.product?.variantConfiguration?.options ?? [])
-const variants = computed(() => props.product?.variantConfiguration?.variants ?? [])
-const selectedVariant = computed(() => {
-  if (variantOptions.value.some((option) => !selectedOptions.value[option.name])) return null
-
-  return variants.value.find((variant) =>
-    variant.available && variant.selections.every((selection) =>
-      selectedOptions.value[selection.optionName] === selection.value
-    )
-  ) ?? null
-})
+const {
+  canSelectValue,
+  selectedOptions,
+  selectedVariant,
+  selectOption,
+  variantOptions,
+  variants
+} = useProductVariants(() => props.product)
 watch(selectedVariant, (variant) => emit('variant-change', variant), { immediate: true })
-
-const canSelectValue = (optionIndex, option, value) => {
-  const precedingOptions = variantOptions.value.slice(0, optionIndex)
-  return variants.value.some((variant) =>
-    variant.available && variant.selections.some((selection) =>
-      selection.optionName === option.name && selection.value === value.label
-    ) && precedingOptions.every((precedingOption) =>
-      !selectedOptions.value[precedingOption.name] ||
-      variant.selections.some((selection) =>
-        selection.optionName === precedingOption.name &&
-        selection.value === selectedOptions.value[precedingOption.name]
-      )
-    )
-  )
-}
-
-const selectOption = (optionIndex, option, value) => {
-  if (!canSelectValue(optionIndex, option, value)) return
-
-  const nextOptions = { ...selectedOptions.value, [option.name]: value.label }
-  const compatibleVariant = variants.value.find((variant) =>
-    variant.available && variantOptions.value
-      .slice(0, optionIndex + 1)
-      .every((selectedOption) =>
-        variant.selections.some((selection) =>
-          selection.optionName === selectedOption.name &&
-          selection.value === nextOptions[selectedOption.name]
-        )
-      )
-  )
-  if (compatibleVariant) {
-    for (const selection of compatibleVariant.selections) {
-      nextOptions[selection.optionName] = selection.value
-    }
-  }
-  selectedOptions.value = nextOptions
-}
 
 const actionProduct = computed(() => {
   if (!props.product) return null

@@ -1,63 +1,122 @@
 # storeApp
 
-Tienda pública creada con Vue 3 y Vite.
+Storefront multitienda construida con Vue 3 y Vite. Cada tienda carga su catálogo, configuración, promociones y pedidos desde la API.
 
-## Configuración de la API
+## Arquitectura
 
-El proyecto usa una única variable: `API_BASE_URL`. No existe una URL de API predeterminada en el código. Como se trata de una URL pública, Vite la expone al cliente para resolver imágenes relativas; no guardes secretos bajo nombres que comiencen con `API_`.
+```text
+src/
+  App.vue                 Coordinación de vistas y estado general de la tienda
+  api/                    Cliente HTTP del storefront
+  components/             Presentación y componentes de interfaz
+  composables/            Estado y lógica reutilizable de catálogo, carrito y checkout
+  config/                 Resolución del slug, dominio y ambiente
+  data/                   Valores locales de respaldo
+  services/               Integraciones de seguimiento en tiempo real
+  utils/                  Formateo, validación y normalización sin interfaz
+worker/                   Archivos estáticos y proxy API para Cloudflare
+server/                   Proxy y pruebas del servidor
+api/                      Rutas API del proyecto
+```
 
-Para desarrollo local, copiá `.env.example` como `.env`, configurá `API_BASE_URL` y reiniciá `npm run dev`.
+### Responsabilidades principales
 
-En Cloudflare Workers Builds, definí `API_BASE_URL` con el mismo valor en los dos ámbitos que Cloudflare separa: **Settings → Builds → Build variables** para Vite y **Settings → Variables and Secrets** para el Worker en tiempo de ejecución.
+- `App.vue` resuelve la tienda, carga su configuración y coordina catálogo, carrito, checkout y seguimiento.
+- `ProductCatalogSection.vue` presenta estados de carga y error, promociones, la grilla de cards y la paginación. Recibe modelos y emite acciones; el carrito se mantiene en `App.vue`.
+- `components/` presenta las vistas. `CheckoutPage.vue` delega su estado y operaciones a `useCheckoutPage.js`; no concentra el flujo de checkout junto al marcado.
+- `useProductCatalog.js` contiene búsqueda, filtros, orden, promociones visibles y desplazamiento de categorías.
+- `useProductVariants.js` administra disponibilidad y selección de variantes. `useProductCard.js` prepara el precio, la etiqueta y las acciones que necesita la card.
+- `useVisitorCart.js` mantiene el carrito y sus operaciones; `useStoreOrders.js` administra pedidos. `api/store.js` centraliza las solicitudes al backend.
+- `utils/` contiene funciones puras o adaptadores pequeños; `config/store.js` resuelve el ambiente y la tienda a partir del host o la ruta.
 
-Para diagnosticar el proxy temporalmente, definí `API_PROXY_LOGGING` con el valor `true` en **Variables and Secrets**. Los logs registran método, ruta, endpoint upstream, estado y duración, sin incluir tokens, cuerpos ni query params. Quitá o cambiá esta variable al terminar el diagnóstico.
+### Flujos principales
 
-El Worker definido en `worker/index.js` sirve los archivos de `dist`, mantiene el fallback de Vue para rutas como `/:storeSlug` y reenvía las solicitudes de la tienda al backend en el mismo origen, por lo que no es necesario abrir CORS. `keep_vars` conserva las variables configuradas desde Cloudflare entre deploys. En Cloudflare Workers Builds, usá `npm run build` como comando de build, `npx wrangler deploy --config wrangler.jsonc` como comando de deploy y `npx wrangler preview --config wrangler.jsonc` como comando de preview.
+1. **Tienda y catálogo:** la aplicación resuelve el slug, carga configuración y productos, y aplica filtros y orden desde el composable de catálogo.
+2. **Variantes:** la card muestra el estado agotado si no hay variantes disponibles. Si queda una sola, muestra esa opción y la agrega directamente; con varias, abre la vista para elegirlas.
+3. **Carrito y checkout:** el carrito se sincroniza con la API. El checkout obtiene opciones de pago y entrega, ventanas disponibles y cotización antes de confirmar el pedido.
+4. **Pedidos:** el seguimiento se actualiza mediante SSE y sincronización con la API. Las operaciones de pedido y comprobantes se delegan a `useStoreOrders.js`.
 
-## Checkout con Mercado Pago
+## Requisitos
 
-El storefront consulta `checkout-options` para mostrar Mercado Pago sólo cuando la API lo habilita para la modalidad seleccionada. El backend debe crear la preferencia de Checkout Pro, devolver `mercadoPagoCheckoutUrl` y `orderTrackingToken` en el checkout, y confirmar el pedido únicamente desde su webhook validado. No configures credenciales de Mercado Pago en Vite ni en este repositorio.
+- Node.js `^22.18.0` o `>=24.12.0`
+- npm
+- Una URL HTTP(S) de API configurada como `API_BASE_URL`
 
-El backend debe devolver `orderId`, `publicOrderId` y `orderTrackingToken` desde checkout. El storefront conserva el token con el `publicOrderId` en `sessionStorage` antes de redirigir a Mercado Pago y, al volver a `/orders/{publicOrderId}`, consulta `GET /orders/current` mediante `X-Order-Tracking-Token`.
-
-El botón **Compartir pedido** copia un enlace `/orders/{publicOrderId}#trackingToken={token}`. El storefront guarda el token del fragmento en `sessionStorage` y elimina el fragmento de la barra de direcciones inmediatamente; nunca lo envía como query parameter. `publicOrderId` no autoriza por sí solo la lectura: sin token local o del fragmento no se consulta la API por ID y se muestra una indicación genérica para abrir el enlace del email o contactar a la tienda. La respuesta usada en el seguimiento debe limitarse a los datos necesarios y no incluir email, teléfono, domicilio ni comprobantes. Las acciones autenticadas usan siempre el token en el header.
-
-Cada tienda se sirve en un subdominio: `https://{storeSlug}.tiendario.cloud/` (despliegue de producción) o `https://{storeSlug}-dev.tiendario.cloud/` (despliegue de la rama `dev`; el sufijo `-dev` se descarta para obtener el slug real). Cada build sólo atiende su propio ambiente: el build de la rama `dev` debe definir `VITE_DEPLOY_ENV=dev` (en Cloudflare, en **Build variables**) y sólo resuelve hosts `-dev`; sin esa variable el build es de producción y no resuelve hosts `-dev`. Los hosts que no corresponden al ambiente muestran "Tienda no encontrada". El dominio base se puede cambiar con `VITE_BASE_DOMAIN` (por defecto `tiendario.cloud`); requiere un DNS/ruta wildcard `*.{dominio base}` apuntando a la app. Los subdominios `www` y `dev` están reservados (`dev.tiendario.cloud` muestra la home). En hosts fuera del dominio base (por ejemplo `localhost`) se mantiene el ruteo por ruta `/{storeSlug}`.
-
-Antes de probar el flujo, configurá en el backend el retorno de Checkout Pro a la ruta de seguimiento de la tienda (`https://{storeSlug}.{dominio base}/orders/{publicOrderId}`). El retorno no incluye token en la URL; el storefront lo recupera desde `sessionStorage` y consulta `GET /orders/current`. Los enlaces del email incluyen el token de 30 días en el fragmento y deben resolver la misma orden en `GET /orders/current`; el frontend verifica que el `publicOrderId` de la respuesta coincida con la ruta. Probá primero con cuentas de prueba de Mercado Pago y una tienda vinculada a una cuenta vendedora de prueba.
-
-
-## Recommended IDE Setup
-
-[VS Code](https://code.visualstudio.com/) + [Vue (Official)](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
-
-## Recommended Browser Setup
-
-- Chromium-based browsers (Chrome, Edge, Brave, etc.):
-  - [Vue.js devtools](https://chromewebstore.google.com/detail/vuejs-devtools/nhdogjmejiglipccpnnnanhbledajbpd)
-  - [Turn on Custom Object Formatter in Chrome DevTools](http://bit.ly/object-formatters)
-- Firefox:
-  - [Vue.js devtools](https://addons.mozilla.org/en-US/firefox/addon/vue-js-devtools/)
-  - [Turn on Custom Object Formatter in Firefox DevTools](https://fxdx.dev/firefox-devtools-custom-object-formatters/)
-
-## Customize configuration
-
-See [Vite Configuration Reference](https://vite.dev/config/).
-
-## Project Setup
+## Desarrollo y pruebas
 
 ```sh
 npm install
 ```
 
-### Compile and Hot-Reload for Development
+Copiá `.env.example` como `.env`, configurá `API_BASE_URL` y levantá Vite:
 
 ```sh
 npm run dev
 ```
 
-### Compile and Minify for Production
+Comandos disponibles:
 
 ```sh
-npm run build
+npm run build       # Compilación de producción
+npm run preview     # Servir localmente la compilación
+npm run test        # Suite completa de Vitest
 ```
+
+Para ejecutar una prueba puntual:
+
+```sh
+npm run test -- src/components/ProductCard.test.js
+```
+
+No hay un comando de lint configurado actualmente.
+
+## Variables de entorno
+
+`API_BASE_URL` es obligatoria y debe ser una URL HTTP(S) válida. Vite usa esta URL para el proxy de desarrollo; el Worker la usa para reenviar las solicitudes al backend. El prefijo `API_` está incluido en `envPrefix`, por lo que la variable queda disponible en el cliente: debe contener únicamente una URL pública, nunca credenciales ni secretos.
+
+Variables opcionales:
+
+| Variable | Uso | Valor predeterminado |
+| --- | --- | --- |
+| `VITE_BASE_DOMAIN` | Dominio base de las tiendas por subdominio | `tiendario.cloud` |
+| `VITE_DEPLOY_ENV` | Ambiente servido por el build; establecer `dev` en builds de desarrollo | `production` |
+| `API_PROXY_LOGGING` | Activa logs temporales del proxy en el Worker al usar `true` | Desactivado |
+
+Para diagnosticar el proxy, `API_PROXY_LOGGING=true` registra método, ruta, endpoint upstream, estado y duración, sin tokens, cuerpos ni parámetros de consulta. Desactivalo al terminar.
+
+## Dominios y resolución de tiendas
+
+- Producción usa `https://{storeSlug}.tiendario.cloud/`.
+- El build de desarrollo usa `https://{storeSlug}-dev.tiendario.cloud/`; requiere `VITE_DEPLOY_ENV=dev`. El sufijo `-dev` se elimina al resolver el slug.
+- Cada build sirve solo su ambiente. Los hosts del ambiente opuesto muestran “Tienda no encontrada”.
+- `www` y `dev` son subdominios reservados; `dev.tiendario.cloud` muestra la página de inicio.
+- En hosts fuera del dominio base, como `localhost`, la tienda se resuelve por la ruta `/{storeSlug}`.
+- Si se cambia `VITE_BASE_DOMAIN`, hace falta configurar un DNS o una ruta wildcard `*.{dominio base}` hacia la aplicación.
+
+## Despliegue en Cloudflare
+
+`worker/index.js` sirve `dist`, mantiene el fallback de la SPA para rutas de tienda y seguimiento, y reenvía `/api/*` al backend en el mismo origen. Por eso, el navegador no necesita acceso CORS directo al backend. `keep_vars` conserva las variables configuradas en Cloudflare entre despliegues.
+
+En **Workers Builds**:
+
+- Build: `npm run build`
+- Deploy: `npx wrangler deploy --config wrangler.jsonc`
+- Preview: `npx wrangler preview --config wrangler.jsonc`
+
+Configurá `API_BASE_URL` tanto en **Settings → Builds → Build variables** (Vite) como en **Settings → Variables and Secrets** (Worker). Para un build de la rama `dev`, definí también `VITE_DEPLOY_ENV=dev` en las variables de build.
+
+## Checkout y seguimiento de pedidos
+
+El storefront consulta `checkout-options` y muestra Mercado Pago solo si la API lo habilita para la modalidad seleccionada. El backend debe crear la preferencia de Checkout Pro, devolver `mercadoPagoCheckoutUrl` y `orderTrackingToken` al confirmar el checkout, y confirmar el pedido únicamente desde un webhook validado. No configures credenciales de Mercado Pago en Vite ni en este repositorio.
+
+El backend debe devolver `orderId`, `publicOrderId` y `orderTrackingToken`. Antes de redirigir a Mercado Pago, el storefront conserva el token junto al `publicOrderId` en `sessionStorage`; al volver a `/orders/{publicOrderId}`, consulta `GET /orders/current` con `X-Order-Tracking-Token`.
+
+**Compartir pedido** crea un enlace `/orders/{publicOrderId}#trackingToken={token}`. El storefront guarda el token del fragmento en `sessionStorage` y elimina el fragmento de la barra de direcciones inmediatamente; no lo envía como parámetro de consulta. El `publicOrderId` por sí solo no autoriza la lectura: sin un token local o del fragmento, no se consulta la API por ID y se muestra una indicación genérica para abrir el enlace del email o contactar a la tienda. La API de seguimiento debe limitar la respuesta a los datos necesarios y excluir email, teléfono, domicilio y comprobantes. Las acciones autenticadas usan el token en el header.
+
+Antes de probar Mercado Pago, configurá en el backend la URL de retorno a `/orders/{publicOrderId}` en el dominio de la tienda. El retorno no lleva el token en la URL: se recupera de `sessionStorage`. Los enlaces de email incluyen un token de 30 días en el fragmento; la aplicación verifica que el `publicOrderId` de la respuesta coincida con la ruta. Usá cuentas de prueba de Mercado Pago y una tienda vinculada a una cuenta vendedora de prueba.
+
+## Entorno de desarrollo recomendado
+
+- [VS Code](https://code.visualstudio.com/) con [Vue - Official](https://marketplace.visualstudio.com/items?itemName=Vue.volar); desactivá Vetur.
+- Vue Devtools en Chromium o Firefox.
+- [Referencia de configuración de Vite](https://vite.dev/config/).

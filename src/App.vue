@@ -1,9 +1,8 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import ProductCard from './components/ProductCard.vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import ProductCatalogSection from './components/ProductCatalogSection.vue'
 import ProductPage from './components/ProductPage.vue'
 import ScrollIndicators from './components/ScrollIndicators.vue'
-import PromotionsCarousel from './components/PromotionsCarousel.vue'
 import { setCatalogPrices } from './utils/formatCurrency.js'
 import { normalizePromotions } from './utils/normalizePromotion.js'
 import CheckoutPage from './components/CheckoutPage.vue'
@@ -18,6 +17,8 @@ import {
   buildStorePath
 } from './config/store.js'
 import { useVisitorCart } from './composables/useVisitorCart.js'
+import { useProductCatalog } from './composables/useProductCatalog.js'
+import { getAvailableVariants } from './composables/useProductVariants.js'
 import { useStoreOrders } from './composables/useStoreOrders.js'
 import { resolveStoreAssetUrl } from './utils/resolveStoreAssetUrl.js'
 import { takeMercadoPagoReturnPublicOrderId } from './utils/mercadoPagoReturn.js'
@@ -280,6 +281,9 @@ const productsMoreError = ref('')
 const productsOffset = ref(0)
 const productsHasMore = ref(true)
 const loadMoreSentinel = ref(null)
+const setLoadMoreSentinel = (element) => {
+  loadMoreSentinel.value = element
+}
 const PRODUCTS_PAGE_SIZE = 20
 let productsObserver = null
 
@@ -330,7 +334,7 @@ const updateProductQty = (product, delta, variantId = null) => {
 const getCardVariantId = (product) => {
   if (product.productType !== 'VARIANT') return null
 
-  const availableVariants = product.variantConfiguration?.variants?.filter((variant) => variant.available) ?? []
+  const availableVariants = getAvailableVariants(product)
   return availableVariants.length === 1 ? availableVariants[0].id : null
 }
 
@@ -380,7 +384,7 @@ const normalizeApiProduct = (product) => {
   const productType = product.productType ?? 'SIMPLE'
   const variantConfiguration = product.variantConfiguration ?? null
   const isAvailable = productType === 'VARIANT'
-    ? Boolean(variantConfiguration?.variants?.some((variant) => variant.available))
+    ? getAvailableVariants({ variantConfiguration }).length > 0
     : product.available
   const maxQuantityPerOrder = product.maxQuantityPerOrder == null
     ? null
@@ -518,117 +522,57 @@ const loadProducts = async ({ append = false } = {}) => {
   }
 }
 
-const categories = computed(() => {
-  const names = categoryData.value.length
-    ? categoryData.value.map((category) => category.name).filter(Boolean)
-    : products.filter((product) => product.isVisible).map((product) => product.category)
-  return [...new Set(names)]
+const {
+  categories,
+  categoryPillsEl,
+  categoryScroll,
+  filteredProducts,
+  search,
+  scrollCategories,
+  selectedCategory,
+  sortOption,
+  sortOptions,
+  sortSelectPt,
+  sortedProducts,
+  toggleCategory,
+  updateCategoryScroll,
+  visiblePromotions
+} = useProductCatalog({
+  products,
+  categoryData,
+  promotions,
+  productsLoading,
+  storeNotFound,
+  branding,
+  storeSecondaryContrastColor,
+  fallbackSecondaryColor: storeInfo.branding.secondaryColor
 })
+const productCardItems = computed(() => sortedProducts.value.map((product) => {
+  const variantId = getCardVariantId(product)
+  const cartQuantity = getCartQuantity(product.id, variantId)
 
-const search = ref('')
-const selectedCategory = ref('')
+  return {
+    product,
+    variantId,
+    quantityLabel: formatQuantityLabel(product, variantId),
+    storeClosed: storeIsOpen.value === false,
+    busy: isProductBusy(product.id, variantId),
+    locked: cartInitializing.value || busyPromotionId.value !== null,
+    inCart: cartQuantity > 0,
+    decreaseRemovesItem: cartQuantity > 0 && cartQuantity <= product.minQuantity,
+    unavailable: isUnavailable(product, variantId),
+    decreaseDisabled: getProductQuantity(product, variantId) <= product.minQuantity && !cartQuantity,
+    increaseDisabled: isProductLimitReached(product, variantId) ||
+      cartInitializing.value || busyPromotionId.value !== null
+  }
+}))
+
 const cartOpen = ref(false)
 const checkoutOpen = ref(false)
 const pendingRemoval = ref(null)
 const removeDialogVisible = ref(false)
 watch(storeIsOpen, (isOpen) => {
   if (isOpen === false) cartOpen.value = false
-})
-const sortOptions = [
-  { value: 'name-asc', label: 'Nombre A-Z', icon: 'pi pi-sort-alpha-up' },
-  { value: 'name-desc', label: 'Nombre Z-A', icon: 'pi pi-sort-alpha-down' },
-  { value: 'price-asc', label: 'Precio menor a mayor', icon: 'pi pi-sort-amount-up' },
-  { value: 'price-desc', label: 'Precio mayor a menor', icon: 'pi pi-sort-amount-down' }
-]
-const sortOption = ref(sortOptions.find((option) => option.value === 'name-asc'))
-const sortSelectPt = computed(() => {
-  const secondaryColor = branding.secondaryColor || storeInfo.branding.secondaryColor
-  const contrastColor = storeSecondaryContrastColor.value
-
-  return {
-    option: ({ context }) => context.selected
-      ? {
-          style: {
-            backgroundColor: secondaryColor,
-            color: contrastColor,
-            fontWeight: '700'
-          }
-        }
-      : undefined
-  }
-})
-const categoryPillsEl = ref(null)
-const categoryScroll = reactive({ canScrollBack: false, canScrollForward: false })
-let categoryResizeObserver = null
-
-const updateCategoryScroll = () => {
-  const el = categoryPillsEl.value
-  if (!el) return
-  categoryScroll.canScrollBack = el.scrollLeft > 1
-  categoryScroll.canScrollForward = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
-}
-
-const scrollCategories = (direction) => {
-  const el = categoryPillsEl.value
-  if (!el) return
-  el.scrollBy({ left: direction * el.clientWidth * 0.7, behavior: 'smooth' })
-}
-
-const focusSelectedCategory = () => {
-  const selected = categoryPillsEl.value?.querySelector('.category-pill.selected')
-  selected?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
-}
-
-const toggleCategory = (category) => {
-  selectedCategory.value = selectedCategory.value === category ? '' : category
-  nextTick(focusSelectedCategory)
-}
-
-watch(categoryPillsEl, (el) => {
-  categoryResizeObserver?.disconnect()
-  categoryResizeObserver = null
-  if (!el) return
-  updateCategoryScroll()
-  if (typeof ResizeObserver !== 'undefined') {
-    categoryResizeObserver = new ResizeObserver(updateCategoryScroll)
-    categoryResizeObserver.observe(el)
-  }
-})
-watch(categories, () => nextTick(updateCategoryScroll))
-onBeforeUnmount(() => categoryResizeObserver?.disconnect())
-
-const filteredProducts = computed(() => {
-  const term = search.value.trim().toLocaleLowerCase('es')
-
-  return products.filter((product) => {
-    const matchesCategory = !selectedCategory.value || selectedCategory.value === product.category
-    const matchesSearch =
-      !term ||
-      product.name.toLocaleLowerCase('es').includes(term) ||
-      product.category.toLocaleLowerCase('es').includes(term)
-
-    return product.isVisible && matchesCategory && matchesSearch
-  })
-})
-
-const visiblePromotions = computed(() => {
-  if (selectedCategory.value || productsLoading.value || storeNotFound.value) return []
-  const term = search.value.trim().toLocaleLowerCase('es')
-  return term
-    ? promotions.value.filter((promotion) => promotion.name.toLocaleLowerCase('es').includes(term))
-    : promotions.value
-})
-
-const sortedProducts = computed(() => {
-  const [field, direction] = sortOption.value.value.split('-')
-  const sorted = [...filteredProducts.value]
-  sorted.sort((first, second) => {
-    const comparison = field === 'name'
-      ? first.name.localeCompare(second.name, 'es', { sensitivity: 'base' })
-      : first.pricePerType - second.pricePerType
-    return direction === 'desc' ? -comparison : comparison
-  })
-  return sorted
 })
 
 const retryStore = async () => {
@@ -1026,84 +970,31 @@ onBeforeUnmount(() => {
         </div>
       </section>
   
-      <section id="products" class="products-grid">
-        <div v-if="productsLoading || storeNotFound" class="product-skeleton-grid" role="status" aria-label="Cargando productos">
-          <Card v-for="placeholder in 8" :key="placeholder" class="skeleton-product-card" aria-hidden="true">
-            <template #header><Skeleton class="skeleton-product-image" /></template>
-            <template #content>
-              <div class="skeleton-product-body">
-                <div class="skeleton-meta-row">
-                  <Skeleton width="5rem" height="1.5rem" />
-                  <Skeleton width="4rem" height="1rem" />
-                </div>
-                <Skeleton width="75%" height="1.4rem" />
-                <div class="skeleton-description">
-                  <Skeleton width="100%" height="0.8rem" />
-                  <Skeleton width="68%" height="0.8rem" />
-                </div>
-                <Skeleton width="100%" height="2.75rem" />
-                <div class="skeleton-footer">
-                  <Skeleton width="5rem" height="1.8rem" />
-                  <Skeleton width="7rem" height="2.8rem" />
-                </div>
-              </div>
-            </template>
-          </Card>
-        </div>
-        <div v-else-if="productsError" class="empty-state">
-          <Message severity="error" :closable="false">{{ productsError }}</Message>
-          <Button label="Reintentar" icon="pi pi-refresh" @click="loadProducts" />
-        </div>
-        <Message v-if="promotionError && visiblePromotions.length" severity="error" class="promotions-section" @close="promotionError = ''">
-          {{ promotionError }}
-        </Message>
-        <PromotionsCarousel
-          v-if="visiblePromotions.length && !productsError"
-          class="promotions-section"
-          :promotions="visiblePromotions"
-          :busy-promotion-id="busyPromotionId"
-          :locked="cartLoading"
-          :store-closed="storeIsOpen === false"
-          @add-bundle="addPromotion"
-        />
-        <h2
-          v-if="visiblePromotions.length && !productsError && !productsLoading && filteredProducts.length"
-          class="products-title"
-        >
-          Productos
-        </h2>
-        <Message
-          v-if="!productsLoading && !storeNotFound && !productsError && filteredProducts.length === 0"
-          severity="info"
-          :closable="false"
-          class="empty-state"
-        >
-          No se encontraron productos.
-        </Message>
-        <ProductCard
-          v-for="product in sortedProducts"
-          :key="product.id"
-          :product="product"
-          :quantity-label="formatQuantityLabel(product, getCardVariantId(product))"
-          :store-closed="storeIsOpen === false"
-          :busy="isProductBusy(product.id, getCardVariantId(product))"
-          :locked="cartInitializing || busyPromotionId !== null"
-          :in-cart="getCartQuantity(product.id, getCardVariantId(product)) > 0"
-          :decrease-removes-item="getCartQuantity(product.id, getCardVariantId(product)) > 0 && getCartQuantity(product.id, getCardVariantId(product)) <= product.minQuantity"
-          :unavailable="isUnavailable(product, getCardVariantId(product))"
-          :decrease-disabled="getProductQuantity(product, getCardVariantId(product)) <= product.minQuantity && !getCartQuantity(product.id, getCardVariantId(product))"
-          :increase-disabled="isProductLimitReached(product, getCardVariantId(product)) || cartInitializing || busyPromotionId !== null"
-          @change-quantity="updateProductQty(product, $event, getCardVariantId(product))"
-          @add-to-cart="addToCart(product, $event)"
-          @remove-from-cart="promptRemoveFromCart(product.id, $event)"
-          @open="openProductPage(product)"
-        />
-        <div v-if="productsHasMore && !storeNotFound && !settingsLoading" class="load-more-region">
-          <Message v-if="productsMoreError" severity="error" :closable="false">{{ productsMoreError }}</Message>
-          <Button v-else label="Cargar más productos" icon="pi pi-chevron-down" :loading="productsLoadingMore" @click="loadNextProducts" />
-          <span ref="loadMoreSentinel" class="load-more-sentinel" aria-hidden="true"></span>
-        </div>
-      </section>
+      <ProductCatalogSection
+        :cards="productCardItems"
+        :loading="productsLoading"
+        :store-not-found="storeNotFound"
+        :error="productsError"
+        :promotion-error="promotionError"
+        :promotions="visiblePromotions"
+        :busy-promotion-id="busyPromotionId"
+        :cart-loading="cartLoading"
+        :store-closed="storeIsOpen === false"
+        :filtered-product-count="filteredProducts.length"
+        :has-more="productsHasMore"
+        :settings-loading="settingsLoading"
+        :more-error="productsMoreError"
+        :loading-more="productsLoadingMore"
+        @retry="loadProducts"
+        @clear-promotion-error="promotionError = ''"
+        @add-promotion="addPromotion"
+        @load-more="loadNextProducts"
+        @sentinel-change="setLoadMoreSentinel"
+        @change-quantity="updateProductQty($event.product, $event.delta, $event.variantId)"
+        @add-to-cart="addToCart($event.product, $event.variantId)"
+        @remove-from-cart="promptRemoveFromCart($event.product.id, $event.variantId)"
+        @open-product="openProductPage"
+      />
 
       <ProductPage
         v-if="selectedProductId"
@@ -1460,13 +1351,11 @@ onBeforeUnmount(() => {
     margin-top: 1rem;
   }
 
-  #banner.store-loading-state :deep(.p-skeleton),
-  .product-skeleton-grid :deep(.p-skeleton) {
+  #banner.store-loading-state :deep(.p-skeleton) {
     background: #e5e7eb;
   }
 
-  #banner.store-loading-state :deep(.p-skeleton)::after,
-  .product-skeleton-grid :deep(.p-skeleton)::after {
+  #banner.store-loading-state :deep(.p-skeleton)::after {
     background: linear-gradient(90deg, transparent, #f3f4f6, transparent);
   }
 
@@ -1711,126 +1600,6 @@ onBeforeUnmount(() => {
     align-items: center;
     gap: 0.55rem;
     white-space: nowrap;
-  }
-
-  #products {
-    width: clamp(300px, 90vw, var(--content-max-width));
-    display: grid;
-    gap: 1rem;
-    padding: 0;
-  }
-
-  #products.products-grid {
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  }
-
-  .promotions-section,
-  .products-title {
-    grid-column: 1 / -1;
-    min-width: 0;
-  }
-
-  .products-title {
-    margin: 0.5rem 0 0;
-    color: var(--primary-text-color);
-    font-size: 1.35rem;
-  }
-
-  .product-skeleton-grid {
-    display: grid;
-    width: 100%;
-    grid-template-columns: inherit;
-    gap: 1rem;
-    grid-column: 1 / -1;
-  }
-
-  .skeleton-product-card {
-    display: flex;
-    min-width: 0;
-    flex-direction: column;
-    overflow: hidden;
-    border-radius: 20px;
-    border: 1px solid #e5e7eb;
-    background: #f9fafb;
-    box-shadow: none;
-  }
-
-  .skeleton-product-card :deep(.p-card-body) {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    padding: 0;
-  }
-
-  .skeleton-product-card :deep(.p-card-header),
-  .skeleton-product-card :deep(.p-card-content) {
-    padding: 0;
-  }
-
-  .skeleton-product-card :deep(.p-card-content) {
-    display: flex;
-    flex: 1;
-  }
-
-  .skeleton-product-image {
-    width: 100%;
-    height: 220px;
-    flex: 0 0 auto;
-    border-radius: 0;
-  }
-
-  .skeleton-product-body {
-    display: flex;
-    min-height: 100%;
-    flex: 1;
-    flex-direction: column;
-    gap: 0.9rem;
-    padding: 1rem;
-  }
-
-  .skeleton-meta-row,
-  .skeleton-footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-  }
-
-  .skeleton-description {
-    display: grid;
-    gap: 0.45rem;
-    min-height: 48px;
-  }
-
-  .empty-state {
-    text-align: center;
-    padding: 2rem;
-    border-radius: 16px;
-    border: 2px solid var(--secondary-color);
-    background: rgba(255, 255, 255, 0.8);
-    color: #555;
-    font-weight: 600;
-  }
-
-  .load-more-region {
-    position: relative;
-    display: grid;
-    min-height: 3.5rem;
-    place-items: center;
-    grid-column: 1 / -1;
-    padding: 0.5rem;
-  }
-
-  .load-more-region :deep(.p-button) {
-    min-width: 13rem;
-  }
-
-  .load-more-sentinel {
-    position: absolute;
-    bottom: 0;
-    width: 1px;
-    height: 1px;
-    pointer-events: none;
   }
 
   .cart-fab,
@@ -2105,27 +1874,7 @@ onBeforeUnmount(() => {
     }
   }
 
-  @media (min-width: 500px) and (max-width: 900px) {
-    #products.products-grid,
-    #products.products-grid .product-skeleton-grid {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-  }
-
   @media (max-width: 499px) {
-    #products.products-grid,
-    #products.products-grid .product-skeleton-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 0.6rem;
-    }
-
-    .skeleton-product-card .skeleton-product-image {
-      height: 150px;
-    }
-
-    .skeleton-product-card .skeleton-product-body {
-      padding: 0.7rem;
-    }
   }
 
 </style>
