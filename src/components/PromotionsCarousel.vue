@@ -105,26 +105,28 @@ const showImage = (promotion) => promotion.image && !failedImages.value.includes
                 {{ item.name }}
               </li>
             </ul>
-            <p v-if="promotion.totalAmount !== null" class="promotion-prices">
-              <s v-if="hasDiscount(promotion) && promotion.originalAmount !== null" class="promotion-original">
-                {{ formatCurrency(promotion.originalAmount, promotion.currency) }}
-              </s>
-              <strong :class="{ 'promotion-total-discounted': hasDiscount(promotion) }">{{ formatCurrency(promotion.totalAmount, promotion.currency) }}</strong>
-            </p>
-            <Button
-              v-if="!storeClosed && promotion.bundleAddable"
-              type="button"
-              class="promotion-action"
-              label="Agregar promoción"
-              icon="pi pi-cart-plus"
-              :loading="busyPromotionId === promotion.id"
-              :disabled="locked"
-              :aria-label="`Agregar promoción ${promotion.name}`"
-              @click="$emit('add-bundle', promotion)"
-            />
-            <p v-else-if="!storeClosed" class="promotion-hint">
-              Elegí las opciones desde cada producto y la promoción se aplica automáticamente.
-            </p>
+            <div class="promotion-card-actions">
+              <p v-if="promotion.totalAmount !== null" class="promotion-prices">
+                <s v-if="hasDiscount(promotion) && promotion.originalAmount !== null" class="promotion-original">
+                  {{ formatCurrency(promotion.originalAmount, promotion.currency) }}
+                </s>
+                <strong :class="{ 'promotion-total-discounted': hasDiscount(promotion) }">{{ formatCurrency(promotion.totalAmount, promotion.currency) }}</strong>
+              </p>
+              <Button
+                v-if="!storeClosed && promotion.bundleAddable"
+                type="button"
+                class="promotion-action"
+                label="Agregar promoción"
+                icon="pi pi-cart-plus"
+                :loading="busyPromotionId === promotion.id"
+                :disabled="locked"
+                :aria-label="`Agregar promoción ${promotion.name}`"
+                @click="$emit('add-bundle', promotion)"
+              />
+              <p v-else-if="!storeClosed" class="promotion-hint">
+                Elegí las opciones desde cada producto y la promoción se aplica automáticamente.
+              </p>
+            </div>
           </div>
         </li>
       </ul>
@@ -279,6 +281,13 @@ const showImage = (promotion) => promotion.image && !failedImages.value.includes
     font-weight: 700;
   }
 
+  .promotion-card-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    margin-top: auto;
+  }
+
   .promotion-prices {
     display: flex;
     flex-wrap: wrap;
@@ -304,13 +313,13 @@ const showImage = (promotion) => promotion.image && !failedImages.value.includes
   .promotion-card .promotion-action.p-button {
     width: 100%;
     min-height: 2.75rem;
-    margin-top: auto;
+    margin-top: 0;
     border-radius: 12px;
     font-weight: 700;
   }
 
   .promotion-hint {
-    margin-top: auto;
+    margin: 0;
     font-style: italic;
   }
 

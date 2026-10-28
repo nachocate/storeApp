@@ -42,4 +42,25 @@ describe('PromotionsCarousel', () => {
 
     app.unmount()
   })
+
+  it('groups the price directly above the add-promotion button', () => {
+    const { app, container } = render([{
+      ...promotion(1),
+      totalAmount: 900,
+      originalAmount: 1000,
+      discountAmount: 100,
+      bundleAddable: true
+    }])
+    const actions = container.querySelector('.promotion-card-actions')
+
+    expect(Array.from(actions.children).map((child) =>
+      child.classList.contains('promotion-prices')
+        ? 'price'
+        : child.classList.contains('promotion-action')
+          ? 'button'
+          : 'other'
+    )).toEqual(['price', 'button'])
+
+    app.unmount()
+  })
 })
