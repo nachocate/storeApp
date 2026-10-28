@@ -373,7 +373,7 @@ const {
   uploadingProofs
 } = useStoreOrders()
 const trackedOrderId = ref(null)
-const trackingFromUrl = ref(false)
+const requestedTrackingPublicOrderId = ref('')
 
 watch(loadMoreSentinel, (sentinel) => {
   if (sentinel) productsObserver?.observe(sentinel)
@@ -585,8 +585,15 @@ onMounted(async () => {
   storeClockInterval = window.setInterval(() => {
     currentClock.value = Date.now()
   }, 60_000)
-  const requestedOrderPromise = REQUESTED_PUBLIC_ORDER_ID
-    ? loadOrderByPublicId(REQUESTED_PUBLIC_ORDER_ID, orderTrackingTokenFromLink)
+  const mercadoPagoReturnPublicOrderId = takeMercadoPagoReturnPublicOrderId(STORE_SLUG)
+  const trackingPublicOrderId = REQUESTED_PUBLIC_ORDER_ID || mercadoPagoReturnPublicOrderId
+  const persistReturnedOrder = !REQUESTED_PUBLIC_ORDER_ID && Boolean(mercadoPagoReturnPublicOrderId)
+  const requestedOrderPromise = trackingPublicOrderId
+    ? loadOrderByPublicId(
+      trackingPublicOrderId,
+      orderTrackingTokenFromLink,
+      persistReturnedOrder ? { persistLocally: true } : undefined
+    )
     : null
 
   if ('IntersectionObserver' in window) {
@@ -599,30 +606,16 @@ onMounted(async () => {
   }
 
   await loadProducts()
-  if (!storeNotFound.value && !storeError.value && !REQUESTED_PUBLIC_ORDER_ID) {
+  if (!storeNotFound.value && !storeError.value && !trackingPublicOrderId) {
     await initializeCart()
     await ensureSelectedProduct()
     await loadDeliveryAvailability()
   }
-  if (!storeNotFound.value && REQUESTED_PUBLIC_ORDER_ID) {
-    const result = await requestedOrderPromise
-    const requestedOrder = orders.value.find((order) =>
-      order.publicOrderId === REQUESTED_PUBLIC_ORDER_ID)
-    openOrderTracking(result === 'ok' ? String(requestedOrder?.orderId ?? '') : REQUESTED_PUBLIC_ORDER_ID)
-  } else if (!storeNotFound.value && !storeError.value) {
-    const mercadoPagoReturnPublicOrderId = takeMercadoPagoReturnPublicOrderId(STORE_SLUG)
-    if (mercadoPagoReturnPublicOrderId) {
-      const result = await loadOrderByPublicId(
-        mercadoPagoReturnPublicOrderId,
-        '',
-        { persistLocally: true }
-      )
-      const returnedOrder = orders.value.find((order) =>
-        order.publicOrderId === mercadoPagoReturnPublicOrderId)
-      openOrderTracking(result === 'ok' && returnedOrder
-        ? String(returnedOrder.orderId)
-        : returnedOrder?.orderId ?? mercadoPagoReturnPublicOrderId)
-    }
+  if (trackingPublicOrderId) {
+    await requestedOrderPromise
+    const returnedOrder = orders.value.find((order) =>
+      order.publicOrderId === trackingPublicOrderId)
+    openOrderTracking(String(returnedOrder?.orderId ?? trackingPublicOrderId))
   }
 })
 
@@ -683,16 +676,17 @@ const returnToStore = () => {
 
   checkoutOpen.value = false
   trackedOrderId.value = null
-  trackingFromUrl.value = false
+  requestedTrackingPublicOrderId.value = ''
 }
 
 const openOrderTracking = (requestedOrderId = '') => {
   const target = requestedOrderId
-    ? orders.value.find((order) => String(order.orderId) === String(requestedOrderId))
+    ? orders.value.find((order) => String(order.orderId) === String(requestedOrderId)) ??
+      orders.value.find((order) => order.publicOrderId === String(requestedOrderId))
     : orders.value[0]
   cartOpen.value = false
   trackedOrderId.value = target?.orderId ?? null
-  trackingFromUrl.value = Boolean(requestedOrderId)
+  requestedTrackingPublicOrderId.value = target ? '' : requestedOrderId
   checkoutOpen.value = true
 }
 
@@ -781,7 +775,7 @@ onBeforeUnmount(() => {
   <body>
     <main id="app" :style="storeThemeStyle" :class="{ 'home-shell': isHome }">
       <WelcomePage v-if="isHome" />
-      <section v-else-if="storeNotFound || environmentMismatch" class="store-status">
+      <section v-else-if="(storeNotFound || environmentMismatch) && !checkoutOpen" class="store-status">
         <Message severity="error" :closable="false" class="store-status-message">
           <div>
             <strong>Error 404: No encontramos esta tienda</strong>
@@ -790,7 +784,7 @@ onBeforeUnmount(() => {
           </div>
         </Message>
       </section>
-      <section v-else-if="storeError && !REQUESTED_PUBLIC_ORDER_ID" class="store-status">
+      <section v-else-if="storeError && !checkoutOpen" class="store-status">
         <Message severity="error" :closable="false" class="store-status-message">
           <div>
             <strong>Error del servidor</strong>
@@ -814,7 +808,7 @@ onBeforeUnmount(() => {
         :refresh-cart="refreshCurrentCart"
         :orders="orders"
         :tracked-order-id="trackedOrderId"
-        :requested-public-order-id="trackingFromUrl ? REQUESTED_PUBLIC_ORDER_ID : ''"
+        :requested-public-order-id="requestedTrackingPublicOrderId"
         :load-order-by-public-id="loadOrderByPublicId"
         :cancel-order="cancelStoreOrder"
         :change-payment-method="changeStorePaymentMethod"

@@ -8,7 +8,7 @@
             <path d="M5 10v10h14V10M9 20v-6h6v6M3 10c0 1.1.9 2 2 2s2-.9 2-2c0 1.1.9 2 2 2s2-.9 2-2c0 1.1.9 2 2 2s2-.9 2-2c0 1.1.9 2 2 2s2-.9 2-2c0 1.1.9 2 2 2s2-.9 2-2" />
           </svg>
         </span>
-        <span>VitrinApp</span>
+        <span>Tiendario</span>
       </a>
       <span class="nav-note">Un lugar para el comercio independiente</span>
     </header>

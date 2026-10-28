@@ -190,7 +190,7 @@ const {
         :closable="false"
         class="tracking-message"
       >
-        {{ orderErrors[requestedOrderId] }}
+        {{ orderErrors[requestedPublicOrderId] }}
         <Button label="Reintentar" icon="pi pi-refresh" text @click="retrySharedOrderLoad" />
       </Message>
 

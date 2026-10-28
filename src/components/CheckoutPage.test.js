@@ -2,6 +2,12 @@ import { createApp, nextTick, ref } from 'vue'
 import { describe, expect, it, vi } from 'vitest'
 import CheckoutPage from './CheckoutPage.vue'
 
+vi.mock('../api/store.js', () => ({
+  requestStoreApi: vi.fn(async (path) => path === '/carts/current/checkout-options'
+    ? { checkoutEnabled: false, fulfillmentOptions: [] }
+    : {})
+}))
+
 vi.mock('../composables/useOrderTracking.js', async () => {
   const { ref } = await import('vue')
   return {
@@ -25,7 +31,7 @@ const makeOrder = (orderStatus) => ({
   createdAt: '2026-10-25T12:00:00.000Z'
 })
 
-const render = (orderStatus, orderProperties = {}) => {
+const render = (orderStatus, orderProperties = {}, propOverrides = {}) => {
   const container = document.createElement('div')
   const orders = ref([{ ...makeOrder(orderStatus), ...orderProperties }])
   const removeOrder = vi.fn((orderId) => {
@@ -52,7 +58,8 @@ const render = (orderStatus, orderProperties = {}) => {
     transferErrors: {},
     transferSuccess: {},
     uploadingProofs: {},
-    submitTransferProof: vi.fn()
+    submitTransferProof: vi.fn(),
+    ...propOverrides
   })
   app.component('Button', {
     props: ['label'],
@@ -68,13 +75,55 @@ const render = (orderStatus, orderProperties = {}) => {
   app.component('InputText', { template: '<input>' })
   app.component('RadioButton', { template: '<input type="radio">' })
   app.component('Textarea', { template: '<textarea />' })
-  app.component('Card', { template: '<div><slot /></div>' })
+  app.component('Card', { template: '<div><slot name="title" /><slot name="content" /><slot /></div>' })
   app.mount(container)
 
   return { app, container, removeOrder, cancelOrder, changePaymentMethod, orders }
 }
 
 describe('CheckoutPage cancelled order removal', () => {
+  it('renders cart item quantities in checkout mode', async () => {
+    const { app, container } = render(null, {}, {
+      trackedOrderId: null,
+      items: [{
+        id: 'product-1',
+        name: 'Producto',
+        quantity: 1,
+        quantityType: 'unit',
+        decimalScale: 0,
+        unitSymbol: 'u',
+        pricePerType: 100
+      }]
+    })
+    await nextTick()
+
+    expect(container.textContent).toContain('Producto')
+    expect(container.textContent).toContain('1 u')
+    app.unmount()
+  })
+
+  it('keeps a public order id in tracking mode when no local order is loaded yet', () => {
+    const { app, container } = render(null, {}, {
+      trackedOrderId: null,
+      requestedPublicOrderId: 'public-order-id'
+    })
+
+    expect(container.textContent).toContain('Estado de tu pedido')
+    expect(container.textContent).not.toContain('Finalizar compra')
+    app.unmount()
+  })
+
+  it('shows the tracking load error for the requested public order', () => {
+    const { app, container } = render(null, {}, {
+      trackedOrderId: null,
+      requestedPublicOrderId: 'public-order-id',
+      orderErrors: { 'public-order-id': 'No se pudo cargar el pedido.' }
+    })
+
+    expect(container.textContent).toContain('No se pudo cargar el pedido.')
+    app.unmount()
+  })
+
   it('requires confirmation before removing a cancelled order', async () => {
     const { app, container, removeOrder } = render('CANCELLED')
 
