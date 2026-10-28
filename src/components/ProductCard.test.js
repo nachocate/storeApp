@@ -5,7 +5,8 @@ import ProductCard from './ProductCard.vue'
 const render = (props) => {
   const container = document.createElement('div')
   const onOpen = vi.fn()
-  const app = createApp(ProductCard, { ...props, onOpen })
+  const onAddToCart = vi.fn()
+  const app = createApp(ProductCard, { ...props, onOpen, onAddToCart })
   app.component('Card', {
     template: '<div><slot name="header" /><slot name="content" /></div>'
   })
@@ -17,7 +18,7 @@ const render = (props) => {
   })
   app.mount(container)
 
-  return { app, container, onOpen }
+  return { app, container, onOpen, onAddToCart }
 }
 
 describe('ProductCard', () => {
@@ -38,13 +39,18 @@ describe('ProductCard', () => {
     app.unmount()
   })
 
-  it('opens the product page to choose a variant', () => {
+  it('opens the product page when multiple variants are available', () => {
     const { app, container, onOpen } = render({
       product: {
         id: 'shirt',
         name: 'Remera',
         productType: 'VARIANT',
-        variantConfiguration: { variants: [{ available: true, pricePerUnit: '1000' }] },
+        variantConfiguration: {
+          variants: [
+            { id: 1, available: true, pricePerUnit: '1000' },
+            { id: 2, available: true, pricePerUnit: '1200' }
+          ]
+        },
         currency: 'ARS',
         unitSymbol: 'u'
       },
@@ -54,6 +60,56 @@ describe('ProductCard', () => {
     container.querySelector('.add-to-cart').click()
 
     expect(onOpen).toHaveBeenCalledOnce()
+    app.unmount()
+  })
+
+  it('shows sold-out status when no variants are available', () => {
+    const { app, container } = render({
+      product: {
+        id: 'shirt',
+        name: 'Remera',
+        productType: 'VARIANT',
+        variantConfiguration: { variants: [{ id: 1, available: false }] }
+      },
+      quantityLabel: '1 u'
+    })
+
+    const button = container.querySelector('.add-to-cart')
+    expect(container.querySelector('.product-prices').textContent).toBe('Agotado')
+    expect(button.textContent).toBe('Agregar al carrito')
+    expect(button.disabled).toBe(true)
+    app.unmount()
+  })
+
+  it('shows and adds the only available variant directly from the card', () => {
+    const { app, container, onAddToCart } = render({
+      product: {
+        id: 'shirt',
+        name: 'Remera',
+        productType: 'VARIANT',
+        variantConfiguration: {
+          variants: [
+            {
+              id: 7,
+              label: 'Talle: M | Color: Negro',
+              available: true,
+              pricePerUnit: '1000'
+            },
+            { id: 8, label: 'Talle: L | Color: Blanco', available: false, pricePerUnit: '1200' }
+          ]
+        },
+        currency: 'ARS',
+        unitSymbol: 'u'
+      },
+      quantityLabel: '1 u'
+    })
+
+    expect(container.textContent).toContain('Talle: M | Color: Negro')
+    const button = container.querySelector('.add-to-cart')
+    expect(button.textContent).toBe('Agregar al carrito')
+    button.click()
+
+    expect(onAddToCart).toHaveBeenCalledWith(7)
     app.unmount()
   })
 })

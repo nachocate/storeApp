@@ -327,6 +327,12 @@ const updateProductQty = (product, delta, variantId = null) => {
   if (storeIsOpen.value === false) return
   updateCartProductQuantity(product, delta, variantId)
 }
+const getCardVariantId = (product) => {
+  if (product.productType !== 'VARIANT') return null
+
+  const availableVariants = product.variantConfiguration?.variants?.filter((variant) => variant.available) ?? []
+  return availableVariants.length === 1 ? availableVariants[0].id : null
+}
 
 // The promotions endpoint is optional: failures just hide the block.
 const loadPromotions = async () => {
@@ -371,6 +377,11 @@ watch(loadMoreSentinel, (sentinel) => {
 
 const normalizeApiProduct = (product) => {
   const { decimalScale, step, minQuantity, unitSymbol } = readQuantityRules(product)
+  const productType = product.productType ?? 'SIMPLE'
+  const variantConfiguration = product.variantConfiguration ?? null
+  const isAvailable = productType === 'VARIANT'
+    ? Boolean(variantConfiguration?.variants?.some((variant) => variant.available))
+    : product.available
   const maxQuantityPerOrder = product.maxQuantityPerOrder == null
     ? null
     : Number(product.maxQuantityPerOrder)
@@ -383,7 +394,7 @@ const normalizeApiProduct = (product) => {
   return {
     id: product.id,
     name: product.name,
-    productType: product.productType ?? 'SIMPLE',
+    productType,
     quantityType: decimalScale > 0 ? 'weight' : 'unit',
     description: product.description ?? '',
     image: images[0] ?? '',
@@ -397,14 +408,14 @@ const normalizeApiProduct = (product) => {
     currency: product.currency ?? 'ARS',
     pricePerType: Number(product.pricePerUnit),
     maxQuantityPerOrder,
-    isSoldOut: !product.available,
+    isSoldOut: !isAvailable,
     isVisible: true,
-    variantConfiguration: product.variantConfiguration ?? null,
+    variantConfiguration,
     step,
     minQuantity,
     decimalScale,
     unitSymbol,
-    quantity: product.available
+    quantity: isAvailable
       ? Math.min(minQuantity, maxQuantityPerOrder ?? minQuantity)
       : 0
   }
@@ -1073,18 +1084,18 @@ onBeforeUnmount(() => {
           v-for="product in sortedProducts"
           :key="product.id"
           :product="product"
-          :quantity-label="formatQuantityLabel(product)"
+          :quantity-label="formatQuantityLabel(product, getCardVariantId(product))"
           :store-closed="storeIsOpen === false"
-          :busy="isProductBusy(product.id)"
+          :busy="isProductBusy(product.id, getCardVariantId(product))"
           :locked="cartInitializing || busyPromotionId !== null"
-          :in-cart="Boolean(cart.find((item) => item.id === product.id))"
-          :decrease-removes-item="getCartQuantity(product.id) > 0 && getCartQuantity(product.id) <= product.minQuantity"
-          :unavailable="isUnavailable(product)"
-          :decrease-disabled="getProductQuantity(product) <= product.minQuantity && !getCartQuantity(product.id)"
-          :increase-disabled="isProductLimitReached(product) || cartInitializing || busyPromotionId !== null"
-          @change-quantity="updateProductQty(product, $event)"
-          @add-to-cart="addToCart(product)"
-          @remove-from-cart="promptRemoveFromCart(product.id)"
+          :in-cart="getCartQuantity(product.id, getCardVariantId(product)) > 0"
+          :decrease-removes-item="getCartQuantity(product.id, getCardVariantId(product)) > 0 && getCartQuantity(product.id, getCardVariantId(product)) <= product.minQuantity"
+          :unavailable="isUnavailable(product, getCardVariantId(product))"
+          :decrease-disabled="getProductQuantity(product, getCardVariantId(product)) <= product.minQuantity && !getCartQuantity(product.id, getCardVariantId(product))"
+          :increase-disabled="isProductLimitReached(product, getCardVariantId(product)) || cartInitializing || busyPromotionId !== null"
+          @change-quantity="updateProductQty(product, $event, getCardVariantId(product))"
+          @add-to-cart="addToCart(product, $event)"
+          @remove-from-cart="promptRemoveFromCart(product.id, $event)"
           @open="openProductPage(product)"
         />
         <div v-if="productsHasMore && !storeNotFound && !settingsLoading" class="load-more-region">

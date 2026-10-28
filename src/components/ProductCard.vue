@@ -24,18 +24,44 @@ watch(() => props.product.image, () => {
   imageFailed.value = false
 })
 
+const availableVariants = computed(() =>
+  (props.product.variantConfiguration?.variants ?? []).filter((variant) => variant.available)
+)
+const singleAvailableVariant = computed(() =>
+  availableVariants.value.length === 1 ? availableVariants.value[0] : null
+)
+const actionProduct = computed(() => ({
+  ...props.product,
+  isSoldOut: props.product.productType === 'VARIANT'
+    ? availableVariants.value.length === 0
+    : props.product.isSoldOut
+}))
+const actionUnavailable = computed(() =>
+  props.product.productType === 'VARIANT' && availableVariants.value.length === 0
+    ? false
+    : props.unavailable
+)
+const variantLabel = computed(() => {
+  const variant = singleAvailableVariant.value
+  if (!variant) return ''
+
+  return variant.label || (variant.selections ?? [])
+    .map(({ optionName, value }) => `${optionName}: ${value}`)
+    .join(' | ')
+})
+
 const unitPriceLabel = computed(() => {
   if (props.product.productType !== 'VARIANT') {
     return `${formatCurrency(props.product.pricePerType, props.product.currency)} / ${props.product.unitSymbol ?? 'u'}`
   }
 
-  const availablePrices = (props.product.variantConfiguration?.variants ?? [])
-    .filter((variant) => variant.available)
+  const availablePrices = availableVariants.value
     .map((variant) => Number(variant.pricePerUnit))
     .filter(Number.isFinite)
-  if (availablePrices.length === 0) return 'Sin opciones disponibles'
+  if (availablePrices.length === 0) return 'Agotado'
 
-  return `Desde ${formatCurrency(Math.min(...availablePrices), props.product.currency)} / ${props.product.unitSymbol ?? 'u'}`
+  const price = formatCurrency(Math.min(...availablePrices), props.product.currency)
+  return `${availablePrices.length === 1 ? '' : 'Desde '}${price} / ${props.product.unitSymbol ?? 'u'}`
 })
 </script>
 
@@ -55,7 +81,6 @@ const unitPriceLabel = computed(() => {
         <i :class="product.imageFallback === 'pastry' ? 'pi pi-sparkles' : product.imageFallback === 'accessory' ? 'pi pi-gift' : 'pi pi-shopping-bag'" aria-hidden="true"></i>
       </div>
       <Tag :value="product.category" severity="primary" rounded class="category-badge" />
-      <small class="product-price-base image-price">{{ unitPriceLabel }}</small>
     </template>
 
     <template #content>
@@ -74,32 +99,36 @@ const unitPriceLabel = computed(() => {
           Ver más...
         </button>
       </div>
+      <div class="product-card-actions">
+        <p v-if="variantLabel" class="product-variant-label">{{ variantLabel }}</p>
+        <p class="product-prices"><strong>{{ unitPriceLabel }}</strong></p>
 
-      <Button
-        v-if="product.productType === 'VARIANT'"
-        class="add-to-cart"
-        type="button"
-        :disabled="storeClosed || !product.variantConfiguration?.variants?.some((variant) => variant.available)"
-        label="Elegir opciones"
-        icon="pi pi-sliders-h"
-        @click="$emit('open')"
-      />
-      <ProductActions
-        v-else
-        :product="product"
-        :quantity-label="quantityLabel"
-        :store-closed="storeClosed"
-        :busy="busy"
-        :locked="locked"
-        :in-cart="inCart"
-        :decrease-removes-item="decreaseRemovesItem"
-        :unavailable="unavailable"
-        :decrease-disabled="decreaseDisabled"
-        :increase-disabled="increaseDisabled"
-        @change-quantity="$emit('change-quantity', $event)"
-        @add-to-cart="$emit('add-to-cart')"
-        @remove-from-cart="$emit('remove-from-cart')"
-      />
+        <Button
+          v-if="product.productType === 'VARIANT' && availableVariants.length > 1"
+          class="add-to-cart"
+          type="button"
+          :disabled="storeClosed"
+          label="Elegir opciones"
+          icon="pi pi-sliders-h"
+          @click="$emit('open')"
+        />
+        <ProductActions
+          v-else
+          :product="actionProduct"
+          :quantity-label="quantityLabel"
+          :store-closed="storeClosed"
+          :busy="busy"
+          :locked="locked"
+          :in-cart="availableVariants.length === 0 && product.productType === 'VARIANT' ? false : inCart"
+          :decrease-removes-item="decreaseRemovesItem"
+          :unavailable="actionUnavailable"
+          :decrease-disabled="decreaseDisabled"
+          :increase-disabled="increaseDisabled"
+          @change-quantity="$emit('change-quantity', $event)"
+          @add-to-cart="$emit('add-to-cart', singleAvailableVariant?.id ?? null)"
+          @remove-from-cart="$emit('remove-from-cart', singleAvailableVariant?.id ?? null)"
+        />
+      </div>
 
       </div>
     </template>
@@ -205,24 +234,6 @@ const unitPriceLabel = computed(() => {
     padding: 1rem;
   }
 
-  .product-price-base {
-    color: #4b5563;
-    font-size: 0.72rem;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-  }
-
-  .image-price {
-    position: absolute;
-    left: 0.6rem;
-    bottom: 0.6rem;
-    z-index: 1;
-    padding: 0;
-    color: var(--secondary-contrast-color);
-    font-size: 1rem;
-    font-weight: 800;
-  }
-
   .product-card h3 {
     width: 100%;
     margin: 0;
@@ -251,12 +262,47 @@ const unitPriceLabel = computed(() => {
     outline-offset: 2px;
   }
 
+  .product-card-actions {
+    display: flex;
+    width: 100%;
+    flex-direction: column;
+    gap: 0.6rem;
+    margin-top: auto;
+  }
+
+  .product-prices {
+    display: flex;
+    width: 100%;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin: 0;
+    color: #111827;
+  }
+
+  .product-prices strong {
+    font-size: 1.15rem;
+  }
+
+  .product-variant-label {
+    width: 100%;
+    margin: 0;
+    color: #4b5563;
+    font-size: inherit;
+    line-height: 1.5;
+    text-align: left;
+  }
+
   .product-card .add-to-cart.p-button {
     width: 100%;
     min-height: 3rem;
-    margin-top: auto;
+    margin-top: 0;
     border-radius: 12px;
     font-weight: 700;
+  }
+
+  .product-card-actions :deep(.product-quantity) {
+    margin-top: 0;
   }
 
   .product-image-clickable {
@@ -316,6 +362,10 @@ const unitPriceLabel = computed(() => {
       text-align: center;
     }
 
+    .product-card .product-card-actions {
+      gap: 0.6rem;
+    }
+
     .product-card .category-badge {
       top: 0.4rem;
       right: 0.4rem;
@@ -328,14 +378,8 @@ const unitPriceLabel = computed(() => {
       font-size: 0.85rem;
     }
 
-    .product-card .image-price {
-      left: 0.4rem;
-      bottom: 0.4rem;
-      padding: 0;
-      font-size: 0.85rem;
-    }
-
-    .product-card .product-description {
+    .product-card .product-description,
+    .product-card .product-variant-label {
       font-size: 0.8rem;
       line-height: 1.4;
     }
