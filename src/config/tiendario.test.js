@@ -31,7 +31,7 @@ describe('resolveContactEmail', () => {
 })
 
 describe('resolveContactFormId', () => {
-  it('uses a configured FormSubmit alias', () => {
+  it('uses a configured formsubmit.io token', () => {
     expect(resolveContactFormId(' a1b2c3d4e5f6 ', 'hola@tiendario.cloud')).toBe('a1b2c3d4e5f6')
   })
 

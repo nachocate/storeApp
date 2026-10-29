@@ -1,50 +1,94 @@
-const FORMSUBMIT_BASE_URL = 'https://formsubmit.co/ajax/'
-const REQUEST_TIMEOUT_MS = 15000
+const FORMSUBMIT_BASE_URL = 'https://formsubmit.io/send/'
+const SUCCESS_PATH = '/contacto-enviado'
+const REQUEST_TIMEOUT_MS = 20000
 
 export class ContactRequestError extends Error {
-  constructor(message, { cause } = {}) {
-    super(message, { cause })
+  constructor(message) {
+    super(message)
     this.name = 'ContactRequestError'
   }
 }
 
-export const buildContactPayload = (request) => {
-  const name = request.name.trim()
+export const buildContactFields = (request, successUrl) => ({
+  name: request.name.trim(),
+  phone: request.phone.trim(),
+  email: request.email.trim(),
+  message: request.message.trim(),
+  _redirect: successUrl
+})
 
-  return {
-    name,
-    phone: request.phone.trim(),
-    email: request.email.trim(),
-    message: request.message.trim(),
-    _subject: `Quiero ser parte de Tiendario - ${name}`,
-    _template: 'table',
-    _captcha: 'false',
-    _honey: ''
-  }
-}
-
-const isSuccessfulResponse = (data) => data?.success === true || data?.success === 'true'
-
-export const sendContactRequest = async (request, formId, { fetchImpl = fetch, timeoutMs = REQUEST_TIMEOUT_MS } = {}) => {
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
-
+const readFrameLocation = (frame) => {
   try {
-    const response = await fetchImpl(`${FORMSUBMIT_BASE_URL}${encodeURIComponent(formId)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify(buildContactPayload(request)),
-      signal: controller.signal
-    })
-    const data = await response.json().catch(() => null)
-
-    if (!response.ok || !isSuccessfulResponse(data)) {
-      throw new ContactRequestError('El servicio de contacto rechazó la consulta.')
-    }
-  } catch (error) {
-    if (error instanceof ContactRequestError) throw error
-    throw new ContactRequestError('No pudimos conectarnos con el servicio de contacto.', { cause: error })
-  } finally {
-    clearTimeout(timeoutId)
+    return frame.contentWindow?.location?.href ?? ''
+  } catch {
+    // Cross-origin: FormSubmit redirected to its own error or confirmation page.
+    return null
   }
 }
+
+const isSuccessLocation = (href, origin) => {
+  try {
+    const url = new URL(href)
+    return url.origin === origin && url.pathname.startsWith(SUCCESS_PATH)
+  } catch {
+    return false
+  }
+}
+
+/*
+ * formsubmit.io only accepts classic form posts and reports the outcome through redirects,
+ * so the form is posted into a hidden iframe whose final location reveals the result.
+ */
+export const sendContactRequest = (request, formId, { doc = document, timeoutMs = REQUEST_TIMEOUT_MS } = {}) =>
+  new Promise((resolve, reject) => {
+    const origin = doc.defaultView.location.origin
+    const frameName = `contact-frame-${Date.now()}`
+    const frame = doc.createElement('iframe')
+    const form = doc.createElement('form')
+    let submitted = false
+    let timeoutId
+
+    const cleanup = () => {
+      clearTimeout(timeoutId)
+      frame.remove()
+      form.remove()
+    }
+
+    const finish = (error) => {
+      cleanup()
+      if (error) reject(error)
+      else resolve()
+    }
+
+    frame.name = frameName
+    frame.title = 'Envío de la consulta'
+    frame.hidden = true
+    frame.setAttribute('aria-hidden', 'true')
+    frame.addEventListener('load', () => {
+      if (!submitted) return
+      const href = readFrameLocation(frame)
+      if (href === 'about:blank' || href === '') return
+      if (href && isSuccessLocation(href, origin)) finish()
+      else finish(new ContactRequestError('El servicio de contacto rechazó la consulta.'))
+    })
+
+    form.method = 'POST'
+    form.action = `${FORMSUBMIT_BASE_URL}${encodeURIComponent(formId)}`
+    form.target = frameName
+    form.hidden = true
+    Object.entries(buildContactFields(request, `${origin}${SUCCESS_PATH}.html`)).forEach(([name, value]) => {
+      const input = doc.createElement('input')
+      input.type = 'hidden'
+      input.name = name
+      input.value = value
+      form.append(input)
+    })
+
+    doc.body.append(frame, form)
+    timeoutId = setTimeout(
+      () => finish(new ContactRequestError('El servicio de contacto no respondió a tiempo.')),
+      timeoutMs
+    )
+    submitted = true
+    form.submit()
+  })

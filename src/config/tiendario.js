@@ -17,10 +17,10 @@ export const resolveContactEmail = (configuredEmail) => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : DEFAULT_CONTACT_EMAIL
 }
 
-// FormSubmit accepts either the destination email or the random alias it issues after activation.
+// formsubmit.io accepts either the destination email or the private token shown in its account settings.
 export const resolveContactFormId = (configuredId, contactEmail) => {
   const id = typeof configuredId === 'string' ? configuredId.trim() : ''
-  return /^[A-Za-z0-9]{8,64}$/.test(id) ? id : contactEmail
+  return /^[A-Za-z0-9_-]{8,128}$/.test(id) ? id : contactEmail
 }
 
 export const ADMIN_URL = resolveAdminUrl(import.meta.env?.VITE_ADMIN_URL)
