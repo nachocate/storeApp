@@ -1,7 +1,12 @@
+<script setup>
+import logoUrl from '../assets/logo.svg'
+</script>
+
 <template>
   <main class="welcome-page">
     <header class="welcome-nav">
-      <a class="brand" href="/" aria-label="VitrinApp, inicio">
+      <a class="brand" href="/" aria-label="Tiendario, inicio">
+        <img class="brand-logo" :src="logoUrl" alt="" aria-hidden="true" />
         <span class="brand-symbol" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none">
             <path d="M3 10h18l-1.4-5H4.4L3 10Z" />
@@ -67,22 +72,16 @@
   text-decoration: none;
 }
 
-.brand-symbol {
-  display: grid;
+.brand-logo {
+  display: block;
   width: 2rem;
-  aspect-ratio: 1;
-  place-items: center;
-  border-radius: 7px;
-  background: #df6847;
-  color: white;
+  height: 2.25rem;
+  flex: 0 0 auto;
+  object-fit: contain;
 }
 
-.brand-symbol svg {
-  width: 1.3rem;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.5;
+.brand-symbol {
+  display: none;
 }
 
 .nav-note {

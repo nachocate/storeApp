@@ -1,6 +1,8 @@
 import { createApp, nextTick, ref } from 'vue'
 import { describe, expect, it, vi } from 'vitest'
 import CheckoutPage from './CheckoutPage.vue'
+import { STORE_SLUG } from '../config/store.js'
+import { takeMercadoPagoReturnPublicOrderId } from '../utils/mercadoPagoReturn.js'
 
 vi.mock('../api/store.js', () => ({
   requestStoreApi: vi.fn(async (path) => path === '/carts/current/checkout-options'
@@ -124,6 +126,64 @@ describe('CheckoutPage cancelled order removal', () => {
     app.unmount()
   })
 
+  it('offers to retry the saved payment link for a pending Mercado Pago order', async () => {
+    const checkoutUrl = 'https://www.mercadopago.com/checkout'
+    takeMercadoPagoReturnPublicOrderId(STORE_SLUG)
+    const assignSpy = vi.spyOn(Object.getPrototypeOf(window.location), 'assign')
+      .mockImplementation(() => {})
+    const { app, container } = render('PENDING_PAYMENT', {
+      paymentProvider: 'MERCADO_PAGO',
+      mercadoPagoCheckoutUrl: checkoutUrl
+    })
+
+    try {
+      const retryButton = container.querySelector('.mercado-pago-retry button')
+      expect(retryButton.textContent).toBe('Reintentar pago')
+
+      retryButton.click()
+      await nextTick()
+
+      expect(assignSpy).toHaveBeenCalledWith(checkoutUrl)
+      expect(takeMercadoPagoReturnPublicOrderId(STORE_SLUG)).toBe('public-order-id')
+    } finally {
+      assignSpy.mockRestore()
+      app.unmount()
+    }
+  })
+
+  it('does not offer Mercado Pago retry for other providers or completed payments', () => {
+    const transferOrder = render('PENDING_PAYMENT', {
+      mercadoPagoCheckoutUrl: 'https://www.mercadopago.com/checkout'
+    })
+    expect(transferOrder.container.querySelector('.mercado-pago-retry')).toBeNull()
+    transferOrder.app.unmount()
+
+    const confirmedOrder = render('CONFIRMED', {
+      paymentProvider: 'MERCADO_PAGO',
+      mercadoPagoCheckoutUrl: 'https://www.mercadopago.com/checkout'
+    })
+    expect(confirmedOrder.container.querySelector('.mercado-pago-retry')).toBeNull()
+    confirmedOrder.app.unmount()
+  })
+
+  it('matches the payment buttons style and keeps cancellation as the last action card', () => {
+    const { app, container } = render('PENDING_PAYMENT', {
+      paymentProvider: 'MERCADO_PAGO',
+      mercadoPagoCheckoutUrl: 'https://www.mercadopago.com/checkout',
+      canChangePaymentMethod: true,
+      availablePaymentMethodChanges: [{ provider: 'TRANSFER', label: 'Transferencia' }],
+      canCancelOrder: true
+    })
+    const retryButton = container.querySelector('.mercado-pago-retry button')
+    const changeMethodButton = container.querySelector('.payment-method-change button')
+    const actionGrid = container.querySelector('.tracked-order-action-grid')
+
+    expect(retryButton.getAttribute('severity')).toBe(changeMethodButton.getAttribute('severity'))
+    expect(retryButton.hasAttribute('outlined')).toBe(changeMethodButton.hasAttribute('outlined'))
+    expect(actionGrid.lastElementChild.classList.contains('tracked-order-cancellation')).toBe(true)
+    app.unmount()
+  })
+
   it('requires confirmation before removing a cancelled order', async () => {
     const { app, container, removeOrder } = render('CANCELLED')
 
@@ -184,9 +244,11 @@ describe('CheckoutPage cancelled order removal', () => {
     const proofCard = container.querySelector('.proof-region')
     const proofGuidance = proofCard.querySelector('small')
     const proofControl = proofCard.querySelector('.proof-input-label')
+    const proofFooter = proofCard.querySelector('.tracked-order-action-footer')
     expect(proofGuidance.textContent).toContain('JPEG, PNG o WebP')
     expect(proofGuidance.compareDocumentPosition(proofControl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(proofCard.lastElementChild).toBe(proofControl)
+    expect(proofCard.lastElementChild).toBe(proofFooter)
+    expect(proofFooter.firstElementChild).toBe(proofControl)
 
     const cancellationCard = container.querySelector('.tracked-order-cancellation')
     expect(cancellationCard.lastElementChild.textContent).toContain('Cancelar pedido')

@@ -134,7 +134,11 @@ export const useStoreOrders = ({
     persistOrders()
   }
 
-  const normalizeTrackedOrder = (current, orderId, { expectedPublicOrderId } = {}) => {
+  const normalizeTrackedOrder = (
+    current,
+    orderId,
+    { expectedPublicOrderId, previousOrder } = {}
+  ) => {
     if (current?.orderId === undefined || current?.orderId === null ||
       String(current.orderId) !== String(orderId)) return null
     if (
@@ -144,15 +148,23 @@ export const useStoreOrders = ({
     const orderStatus = current.status ?? current.orderStatus
     if (orderStatus === 'COMPLETED') return { orderStatus, completed: true }
     const items = readOrderItems(current)
+    const paymentProvider = current.paymentProvider ?? previousOrder?.paymentProvider ?? null
+    const currentMercadoPagoUrl = typeof current.mercadoPagoCheckoutUrl === 'string' &&
+      current.mercadoPagoCheckoutUrl.trim()
+      ? current.mercadoPagoCheckoutUrl
+      : null
 
     return {
       orderId: current.orderId,
       publicOrderId: current.publicOrderId ?? null,
       orderStatus,
       ...(items.length ? { items } : {}),
-      paymentProvider: current.paymentProvider ?? null,
+      paymentProvider,
       paymentStatus: current.paymentStatus ?? null,
-      mercadoPagoCheckoutUrl: current.mercadoPagoCheckoutUrl ?? null,
+      mercadoPagoCheckoutUrl: paymentProvider === 'MERCADO_PAGO' &&
+        orderStatus === 'PENDING_PAYMENT'
+        ? currentMercadoPagoUrl ?? previousOrder?.mercadoPagoCheckoutUrl ?? null
+        : null,
       fulfillmentType: current.fulfillmentType ?? null,
       totalAmount: current.totalAmount ?? null,
       currency: current.currency ?? null,
@@ -183,7 +195,10 @@ export const useStoreOrders = ({
     try {
       const payload = await apiRequest('/orders/current', { orderTrackingToken })
       const current = payload?.order ?? payload?.data?.order ?? payload?.data ?? payload
-      const order = normalizeTrackedOrder(current, current?.orderId, { expectedPublicOrderId: publicOrderId })
+      const order = normalizeTrackedOrder(current, current?.orderId, {
+        expectedPublicOrderId: publicOrderId,
+        previousOrder: existingOrder
+      })
       if (!order) {
         forgetOrderTrackingToken(storeSlug, publicOrderId)
         return 'invalid-link'
@@ -252,7 +267,10 @@ export const useStoreOrders = ({
       const normalizedOrder = normalizeTrackedOrder(
         current?.order ?? current?.data?.order ?? current?.data ?? current,
         orderId,
-        order.publicOrderId ? { expectedPublicOrderId: order.publicOrderId } : {}
+        {
+          ...(order.publicOrderId ? { expectedPublicOrderId: order.publicOrderId } : {}),
+          previousOrder: order
+        }
       )
       if (!normalizedOrder) {
         removeOrder(orderId)

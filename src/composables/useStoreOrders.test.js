@@ -84,6 +84,23 @@ describe('useStoreOrders', () => {
       .toContain('private-token')
   })
 
+  it('persists the Mercado Pago checkout link for payment retries', () => {
+    const checkoutUrl = 'https://www.mercadopago.com/checkout'
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', now: () => 1000 })
+    mountedOrders.storeOrders.addOrder({
+      orderId: 42,
+      publicOrderId: 'public-id-42',
+      orderTrackingToken: 'private-token',
+      orderStatus: 'PENDING_PAYMENT',
+      paymentProvider: 'MERCADO_PAGO',
+      mercadoPagoCheckoutUrl: checkoutUrl
+    })
+
+    expect(mountedOrders.storeOrders.orders.value[0].mercadoPagoCheckoutUrl).toBe(checkoutUrl)
+    expect(JSON.parse(localStorage.getItem('vitrinapp-orders-almacen-demo'))[0].mercadoPagoCheckoutUrl)
+      .toBe(checkoutUrl)
+  })
+
   it('requires an order id to associate the tracking token with the order', () => {
     mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', now: () => 1000 })
 
@@ -103,6 +120,50 @@ describe('useStoreOrders', () => {
       orderTrackingToken: 'private-token'
     })
     expect(mountedOrders.storeOrders.orders.value).toEqual([])
+  })
+
+  it('preserves the saved Mercado Pago link when the tracking response omits it', async () => {
+    const checkoutUrl = 'https://www.mercadopago.com/checkout'
+    const apiRequest = vi.fn().mockResolvedValue({
+      orderId: 42,
+      status: 'PENDING_PAYMENT',
+      paymentProvider: 'MERCADO_PAGO'
+    })
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', apiRequest, now: () => 1000 })
+    mountedOrders.storeOrders.addOrder({
+      orderId: 42,
+      orderTrackingToken: 'private-token',
+      orderStatus: 'PENDING_PAYMENT',
+      paymentProvider: 'MERCADO_PAGO',
+      mercadoPagoCheckoutUrl: checkoutUrl
+    })
+
+    await expect(mountedOrders.storeOrders.syncOrder(42)).resolves.toBe('ok')
+
+    expect(mountedOrders.storeOrders.orders.value[0].mercadoPagoCheckoutUrl).toBe(checkoutUrl)
+  })
+
+  it('preserves the saved Mercado Pago link when loading by public order ID', async () => {
+    const checkoutUrl = 'https://www.mercadopago.com/checkout'
+    const apiRequest = vi.fn().mockResolvedValue({
+      orderId: 42,
+      publicOrderId: 'public-id-42',
+      status: 'PENDING_PAYMENT',
+      paymentProvider: 'MERCADO_PAGO'
+    })
+    mountedOrders = createMountedOrders({ storeSlug: 'almacen-demo', apiRequest, now: () => 1000 })
+    mountedOrders.storeOrders.addOrder({
+      orderId: 42,
+      publicOrderId: 'public-id-42',
+      orderTrackingToken: 'private-token',
+      orderStatus: 'PENDING_PAYMENT',
+      paymentProvider: 'MERCADO_PAGO',
+      mercadoPagoCheckoutUrl: checkoutUrl
+    })
+
+    await expect(mountedOrders.storeOrders.loadOrderByPublicId('public-id-42')).resolves.toBe('ok')
+
+    expect(mountedOrders.storeOrders.orders.value[0].mercadoPagoCheckoutUrl).toBe(checkoutUrl)
   })
 
   it('drops the order when the API rejects the token or returns another order', async () => {

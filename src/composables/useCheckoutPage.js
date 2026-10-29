@@ -341,6 +341,28 @@ export const useCheckoutPage = (props, emit) => {
   const pendingMercadoPagoPayment = computed(() => isPendingMercadoPagoOrder(
     savedOrder.value ?? trackedOrder.value
   ))
+  const canRetryMercadoPagoPayment = computed(() => isPendingMercadoPagoOrder(trackedOrder.value))
+  const mercadoPagoRetryError = ref('')
+  const retryMercadoPagoPayment = () => {
+    if (!canRetryMercadoPagoPayment.value) return
+
+    mercadoPagoRetryError.value = ''
+    let paymentUrl
+    try {
+      paymentUrl = resolveMercadoPagoCheckoutUrl(trackedOrder.value.mercadoPagoCheckoutUrl)
+    } catch {
+      mercadoPagoRetryError.value = 'No pudimos validar el enlace de pago. Contactá a la tienda para obtener ayuda.'
+      return
+    }
+
+    if (!paymentUrl) {
+      mercadoPagoRetryError.value = 'No encontramos el enlace de pago. Contactá a la tienda para obtener ayuda.'
+      return
+    }
+
+    rememberMercadoPagoReturnPublicOrderId(STORE_SLUG, trackedOrder.value.publicOrderId)
+    window.location.assign(paymentUrl)
+  }
   const confirmedMercadoPagoPayment = computed(() => {
     const order = savedOrder.value ?? trackedOrder.value
     return order?.paymentProvider === 'MERCADO_PAGO' &&
@@ -735,6 +757,9 @@ export const useCheckoutPage = (props, emit) => {
     quote,
     pendingMercadoPagoPayment,
     confirmedMercadoPagoPayment,
+    canRetryMercadoPagoPayment,
+    mercadoPagoRetryError,
+    retryMercadoPagoPayment,
     itemCount,
     enabledFulfillments,
     enabledPayments,
