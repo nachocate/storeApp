@@ -168,8 +168,8 @@ const getStoreMarkStyle = (mark, index) => {
   border-radius: 24px;
   background: rgb(255 255 255 / 9%);
   box-shadow: 0 24px 70px rgb(0 0 0 / 12%), inset 0 1px 0 rgb(255 255 255 / 24%);
-  backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
   animation: arrive 650ms ease-out both;
   container-type: inline-size;
 }

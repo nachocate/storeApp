@@ -266,8 +266,8 @@ const submitContactRequest = async () => {
   border: 1px solid rgb(250 250 250 / 28%);
   border-radius: 16px;
   background: rgb(250 250 250 / 10%);
-  backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
 }
 
 .contact-callout h2 {
