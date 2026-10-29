@@ -27,7 +27,12 @@ describe('validateContactRequest', () => {
     expect(validateContactField('phone', '1234')).toContain('8 dígitos')
     expect(validateContactField('email', 'ana@correo')).toContain('correo válido')
     expect(validateContactField('message', 'Hola')).toContain('al menos 10')
-    expect(validateContactField('name', 'a'.repeat(81))).toContain('hasta 80')
+    expect(validateContactField('name', 'a'.repeat(101))).toContain('hasta 100')
+  })
+
+  it('accepts the phone formats allowed by the API', () => {
+    expect(validateContactField('phone', '0341.456.7890')).toBe('')
+    expect(validateContactField('phone', '+54 (341) 456-7890')).toBe('')
   })
 
   it('ignores surrounding whitespace', () => {

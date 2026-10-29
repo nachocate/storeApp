@@ -57,4 +57,88 @@ describe('Cloudflare Worker store API proxy', () => {
     expect(response.status).toBe(500)
     expect(await response.json()).toEqual({ error: 'Store API is not configured' })
   })
+
+  it('forwards vendor inquiries to the backend and relays the empty response', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const inquiry = JSON.stringify({ name: 'María', phone: '341 456 7890', email: 'maria@correo.com', message: 'Hola' })
+
+    const response = await worker.fetch(
+      new Request('https://tiendario.cloud/api/v1/vendor-inquiries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: 'session=private' },
+        body: inquiry
+      }),
+      { API_BASE_URL: 'https://api.example.com/' }
+    )
+
+    const [upstreamUrl, options] = fetchMock.mock.calls[0]
+    expect(upstreamUrl.href).toBe('https://api.example.com/api/v1/vendor-inquiries')
+    expect(options.method).toBe('POST')
+    expect(options.headers.get('content-type')).toBe('application/json')
+    expect(options.headers.has('cookie')).toBe(false)
+    expect(await new Response(options.body).text()).toBe(inquiry)
+    expect(response.status).toBe(204)
+  })
+
+  it('rejects vendor inquiry methods other than POST', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await worker.fetch(
+      new Request('https://tiendario.cloud/api/v1/vendor-inquiries'),
+      { API_BASE_URL: 'https://api.example.com/' }
+    )
+
+    expect(response.status).toBe(405)
+    expect(response.headers.get('Allow')).toBe('POST')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  const createInquiryRequest = (ip = '203.0.113.7') => new Request('https://tiendario.cloud/api/v1/vendor-inquiries', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': ip },
+    body: '{"name":"María"}'
+  })
+
+  it('rate limits vendor inquiries per client IP before reaching the backend', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const limit = vi.fn().mockResolvedValue({ success: false })
+
+    const response = await worker.fetch(createInquiryRequest(), {
+      API_BASE_URL: 'https://api.example.com/',
+      VENDOR_INQUIRY_RATE_LIMITER: { limit }
+    })
+
+    expect(limit).toHaveBeenCalledWith({ key: 'vendor-inquiry:203.0.113.7' })
+    expect(response.status).toBe(429)
+    expect(response.headers.get('Retry-After')).toBe('60')
+    expect(await response.json()).toMatchObject({ code: 'rate_limited' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('forwards vendor inquiries within the limit', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await worker.fetch(createInquiryRequest(), {
+      API_BASE_URL: 'https://api.example.com/',
+      VENDOR_INQUIRY_RATE_LIMITER: { limit: vi.fn().mockResolvedValue({ success: true }) }
+    })
+
+    expect(response.status).toBe(204)
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('keeps accepting vendor inquiries when the rate limiter fails', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })))
+
+    const response = await worker.fetch(createInquiryRequest(), {
+      API_BASE_URL: 'https://api.example.com/',
+      VENDOR_INQUIRY_RATE_LIMITER: { limit: vi.fn().mockRejectedValue(new Error('unavailable')) }
+    })
+
+    expect(response.status).toBe(204)
+  })
 })

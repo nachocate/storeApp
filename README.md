@@ -81,11 +81,13 @@ Variables opcionales:
 | `VITE_BASE_DOMAIN` | Dominio base de las tiendas por subdominio | `tiendario.cloud` |
 | `VITE_DEPLOY_ENV` | Ambiente servido por el build; establecer `dev` en builds de desarrollo | `production` |
 | `VITE_ADMIN_URL` | Destino del botón "Mi tienda" en la bienvenida y el contacto | `https://admin-dev.tiendario.cloud/` |
-| `VITE_CONTACT_EMAIL` | Correo que recibe vía [formsubmit.io](https://formsubmit.io) las consultas de `/contacto`; el primer envío requiere confirmar la activación desde ese correo | `concat.studio.vt@gmail.com` |
-| `VITE_CONTACT_FORM_ID` | Token privado de formsubmit.io (en la configuración de la cuenta) que se usa en lugar del correo para no exponerlo | Correo de contacto |
 | `API_PROXY_LOGGING` | Activa logs temporales del proxy en el Worker al usar `true` | Desactivado |
 
 Para diagnosticar el proxy, `API_PROXY_LOGGING=true` registra método, ruta, endpoint upstream, estado y duración, sin tokens, cuerpos ni parámetros de consulta. Desactivalo al terminar.
+
+El formulario de `/contacto` envía `POST /api/v1/vendor-inquiries` al mismo origen y el proxy lo reenvía a `API_BASE_URL`. El backend decide los destinatarios (usuarios `SUPER_ADMIN`), por lo que el frontend no expone ningún correo.
+
+En Cloudflare, el Worker limita esa ruta a 5 consultas por minuto por IP mediante el binding `VENDOR_INQUIRY_RATE_LIMITER` definido en `wrangler.jsonc` (`namespace_id` `1001`, que debe ser único en la cuenta). Al superar el límite responde `429` sin llamar al backend. El límite es aproximado y se cuenta por ubicación de Cloudflare; si el binding no está disponible, el Worker deja pasar la consulta. Como `API_BASE_URL` también es accesible de forma directa, el backend debería aplicar su propio límite. El despliegue en Vercel y el proxy de desarrollo de Vite no aplican este límite.
 
 ## Dominios y resolución de tiendas
 

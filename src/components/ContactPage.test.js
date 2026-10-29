@@ -6,9 +6,12 @@ import Message from 'primevue/message'
 import Textarea from 'primevue/textarea'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ContactPage from './ContactPage.vue'
-import { sendContactRequest } from '../services/contactService.js'
+import { submitVendorInquiry } from '../api/vendorInquiries.js'
 
-vi.mock('../services/contactService.js', () => ({ sendContactRequest: vi.fn() }))
+vi.mock('../api/vendorInquiries.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  submitVendorInquiry: vi.fn()
+}))
 
 let app
 
@@ -80,27 +83,26 @@ describe('ContactPage', () => {
     expect(nameInput.getAttribute('aria-invalid')).toBe('true')
     expect(nameInput.getAttribute('aria-describedby')).toBe('contact-name-error')
     expect(document.activeElement).toBe(nameInput)
-    expect(sendContactRequest).not.toHaveBeenCalled()
+    expect(submitVendorInquiry).not.toHaveBeenCalled()
   })
 
   it('sends a valid request and clears the form', async () => {
-    sendContactRequest.mockResolvedValue()
+    submitVendorInquiry.mockResolvedValue(null)
     const container = render()
 
     await fillValidRequest(container)
     await submit(container)
 
-    expect(sendContactRequest).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'Ana Pérez', email: 'ana@correo.com' }),
-      'concat.studio.vt@gmail.com'
+    expect(submitVendorInquiry).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Ana Pérez', email: 'ana@correo.com' })
     )
     expect(container.querySelector('.contact-status').textContent).toContain('Recibimos tu consulta')
     expect(container.querySelector('#contact-name').value).toBe('')
     expect(container.querySelectorAll('.contact-field-error')).toHaveLength(0)
   })
 
-  it('keeps the entered data and offers an alternative when sending fails', async () => {
-    sendContactRequest.mockRejectedValue(new Error('network'))
+  it('keeps the entered data and shows a safe message when the API fails', async () => {
+    submitVendorInquiry.mockRejectedValue(Object.assign(new Error('Service unavailable'), { status: 503 }))
     const container = render()
 
     await fillValidRequest(container)
@@ -108,7 +110,8 @@ describe('ContactPage', () => {
 
     const status = container.querySelector('.contact-status')
     expect(status.getAttribute('role')).toBe('alert')
-    expect(status.textContent).toContain('concat.studio.vt@gmail.com')
+    expect(status.textContent).toContain('Intentá de nuevo en unos minutos')
+    expect(status.textContent).not.toContain('Service unavailable')
     expect(container.querySelector('#contact-name').value).toBe('Ana Pérez')
   })
 
@@ -119,7 +122,7 @@ describe('ContactPage', () => {
     await fill(container, 'honey', 'spam')
     await submit(container)
 
-    expect(sendContactRequest).not.toHaveBeenCalled()
+    expect(submitVendorInquiry).not.toHaveBeenCalled()
     expect(container.querySelector('.contact-status').textContent).toContain('Recibimos tu consulta')
   })
 })

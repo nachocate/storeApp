@@ -6,7 +6,7 @@ const routeParameters = ['storeSlug', 'path']
 
 export const config = { api: { bodyParser: false } }
 
-const readRequestBody = async (request) => {
+export const readRequestBody = async (request) => {
   if (request.body !== undefined) {
     if (Buffer.isBuffer(request.body) || typeof request.body === 'string') return request.body
     return JSON.stringify(request.body)

@@ -1,9 +1,9 @@
 import { isValidEmail } from './invoiceData.js'
 
 export const CONTACT_FIELD_LIMITS = {
-  name: 80,
+  name: 100,
   phone: 30,
-  email: 120,
+  email: 254,
   message: 1000
 }
 
@@ -26,7 +26,7 @@ const validateName = (value) => {
 
 const validatePhone = (value) => {
   if (!value) return 'Ingresá un teléfono de contacto.'
-  if (!/^\+?[\d\s()-]+$/.test(value)) return 'Usá sólo números, espacios, guiones o paréntesis.'
+  if (!/^\+?[\d\s().-]+$/.test(value)) return 'Usá sólo números, espacios, puntos, guiones o paréntesis.'
   if (value.replace(/\D/g, '').length < MIN_PHONE_DIGITS) return `El teléfono debe tener al menos ${MIN_PHONE_DIGITS} dígitos.`
   if (value.length > CONTACT_FIELD_LIMITS.phone) return `Usá hasta ${CONTACT_FIELD_LIMITS.phone} caracteres.`
   return ''

@@ -1,5 +1,4 @@
 export const DEFAULT_ADMIN_URL = 'https://admin-dev.tiendario.cloud/'
-export const DEFAULT_CONTACT_EMAIL = 'concat.studio.vt@gmail.com'
 
 export const resolveAdminUrl = (configuredUrl) => {
   if (typeof configuredUrl !== 'string' || !configuredUrl.trim()) return DEFAULT_ADMIN_URL
@@ -12,17 +11,4 @@ export const resolveAdminUrl = (configuredUrl) => {
   }
 }
 
-export const resolveContactEmail = (configuredEmail) => {
-  const email = typeof configuredEmail === 'string' ? configuredEmail.trim() : ''
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : DEFAULT_CONTACT_EMAIL
-}
-
-// formsubmit.io accepts either the destination email or the private token shown in its account settings.
-export const resolveContactFormId = (configuredId, contactEmail) => {
-  const id = typeof configuredId === 'string' ? configuredId.trim() : ''
-  return /^[A-Za-z0-9_-]{8,128}$/.test(id) ? id : contactEmail
-}
-
 export const ADMIN_URL = resolveAdminUrl(import.meta.env?.VITE_ADMIN_URL)
-export const CONTACT_EMAIL = resolveContactEmail(import.meta.env?.VITE_CONTACT_EMAIL)
-export const CONTACT_FORM_ID = resolveContactFormId(import.meta.env?.VITE_CONTACT_FORM_ID, CONTACT_EMAIL)

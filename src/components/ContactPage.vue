@@ -1,7 +1,6 @@
 <script setup>
 import { computed, nextTick, reactive, ref } from 'vue'
-import { CONTACT_EMAIL, CONTACT_FORM_ID } from '../config/tiendario.js'
-import { sendContactRequest } from '../services/contactService.js'
+import { getVendorInquiryErrorMessage, submitVendorInquiry } from '../api/vendorInquiries.js'
 import {
   CONTACT_FIELD_LIMITS,
   createEmptyContactRequest,
@@ -21,6 +20,7 @@ const form = reactive(createEmptyContactRequest())
 const touched = reactive({ name: false, phone: false, email: false, message: false })
 const submitAttempted = ref(false)
 const submitStatus = ref('idle')
+const submitError = ref('')
 const honeypot = ref('')
 const formElement = ref(null)
 
@@ -74,10 +74,11 @@ const submitContactRequest = async () => {
 
   submitStatus.value = 'sending'
   try {
-    await sendContactRequest({ ...form }, CONTACT_FORM_ID)
+    await submitVendorInquiry({ ...form })
     resetForm()
     submitStatus.value = 'sent'
-  } catch {
+  } catch (error) {
+    submitError.value = getVendorInquiryErrorMessage(error)
     submitStatus.value = 'error'
   }
 }
@@ -191,8 +192,7 @@ const submitContactRequest = async () => {
             ¡Gracias! Recibimos tu consulta y te vamos a contactar a la brevedad.
           </Message>
           <Message v-else-if="submitStatus === 'error'" severity="error" :closable="false" class="contact-status" role="alert">
-            No pudimos enviar tu consulta. Revisá tu conexión e intentá de nuevo, o escribinos a
-            <a :href="`mailto:${CONTACT_EMAIL}`">{{ CONTACT_EMAIL }}</a>.
+            {{ submitError }}
           </Message>
 
           <Button
@@ -400,11 +400,6 @@ const submitContactRequest = async () => {
   color: #b42318;
   font-size: 0.82rem;
   font-weight: 600;
-}
-
-.contact-status a {
-  color: inherit;
-  font-weight: 700;
 }
 
 .contact-honeypot {
