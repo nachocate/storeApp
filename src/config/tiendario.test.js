@@ -3,7 +3,8 @@ import {
   DEFAULT_ADMIN_URL,
   DEFAULT_CONTACT_EMAIL,
   resolveAdminUrl,
-  resolveContactEmail
+  resolveContactEmail,
+  resolveContactFormId
 } from './tiendario.js'
 
 describe('resolveAdminUrl', () => {
@@ -26,5 +27,16 @@ describe('resolveContactEmail', () => {
   it('falls back to the default for missing or invalid values', () => {
     expect(resolveContactEmail()).toBe(DEFAULT_CONTACT_EMAIL)
     expect(resolveContactEmail('hola')).toBe(DEFAULT_CONTACT_EMAIL)
+  })
+})
+
+describe('resolveContactFormId', () => {
+  it('uses a configured FormSubmit alias', () => {
+    expect(resolveContactFormId(' a1b2c3d4e5f6 ', 'hola@tiendario.cloud')).toBe('a1b2c3d4e5f6')
+  })
+
+  it('falls back to the contact email for missing or invalid aliases', () => {
+    expect(resolveContactFormId(undefined, 'hola@tiendario.cloud')).toBe('hola@tiendario.cloud')
+    expect(resolveContactFormId('../otro', 'hola@tiendario.cloud')).toBe('hola@tiendario.cloud')
   })
 })

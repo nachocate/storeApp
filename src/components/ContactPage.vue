@@ -1,9 +1,9 @@
 <script setup>
 import { computed, nextTick, reactive, ref } from 'vue'
-import { CONTACT_EMAIL } from '../config/tiendario.js'
+import { CONTACT_EMAIL, CONTACT_FORM_ID } from '../config/tiendario.js'
+import { sendContactRequest } from '../services/contactService.js'
 import {
   CONTACT_FIELD_LIMITS,
-  buildContactMailto,
   createEmptyContactRequest,
   validateContactRequest
 } from '../utils/contactRequest.js'
@@ -20,8 +20,11 @@ const PLAN_FEATURES = [
 const form = reactive(createEmptyContactRequest())
 const touched = reactive({ name: false, phone: false, email: false, message: false })
 const submitAttempted = ref(false)
-const draftOpened = ref(false)
+const submitStatus = ref('idle')
+const honeypot = ref('')
 const formElement = ref(null)
+
+const isSending = computed(() => submitStatus.value === 'sending')
 
 const errors = computed(() => validateContactRequest(form))
 const messageLength = computed(() => form.message.trim().length)
@@ -44,9 +47,17 @@ const fieldAttributes = (field) => {
   }
 }
 
+const resetForm = () => {
+  Object.assign(form, createEmptyContactRequest())
+  Object.keys(touched).forEach((field) => { touched[field] = false })
+  submitAttempted.value = false
+}
+
 const submitContactRequest = async () => {
+  if (isSending.value) return
+
   submitAttempted.value = true
-  draftOpened.value = false
+  submitStatus.value = 'idle'
 
   if (Object.keys(errors.value).length > 0) {
     await nextTick()
@@ -54,8 +65,21 @@ const submitContactRequest = async () => {
     return
   }
 
-  draftOpened.value = true
-  window.location.href = buildContactMailto(form, CONTACT_EMAIL)
+  // Bots fill the hidden field; pretend success without sending anything.
+  if (honeypot.value) {
+    resetForm()
+    submitStatus.value = 'sent'
+    return
+  }
+
+  submitStatus.value = 'sending'
+  try {
+    await sendContactRequest({ ...form }, CONTACT_FORM_ID)
+    resetForm()
+    submitStatus.value = 'sent'
+  } catch {
+    submitStatus.value = 'error'
+  }
 }
 </script>
 
@@ -158,16 +182,26 @@ const submitContactRequest = async () => {
             </small>
           </div>
 
-          <Message v-if="draftOpened" severity="success" :closable="false" class="contact-status" role="status">
-            Abrimos tu aplicación de correo con la consulta lista para enviar. Si no se abrió, escribinos a
+          <div class="contact-honeypot" aria-hidden="true">
+            <label for="contact-honey">No completar este campo</label>
+            <input id="contact-honey" v-model="honeypot" type="text" name="_honey" tabindex="-1" autocomplete="off" />
+          </div>
+
+          <Message v-if="submitStatus === 'sent'" severity="success" :closable="false" class="contact-status" role="status">
+            ¡Gracias! Recibimos tu consulta y te vamos a contactar a la brevedad.
+          </Message>
+          <Message v-else-if="submitStatus === 'error'" severity="error" :closable="false" class="contact-status" role="alert">
+            No pudimos enviar tu consulta. Revisá tu conexión e intentá de nuevo, o escribinos a
             <a :href="`mailto:${CONTACT_EMAIL}`">{{ CONTACT_EMAIL }}</a>.
           </Message>
 
           <Button
             type="submit"
-            label="Enviar consulta"
-            icon="pi pi-send"
+            :label="isSending ? 'Enviando…' : 'Enviar consulta'"
+            :icon="isSending ? 'pi pi-spin pi-spinner' : 'pi pi-send'"
             icon-pos="right"
+            :disabled="isSending"
+            :aria-busy="isSending ? 'true' : 'false'"
             class="tiendario-button tiendario-button--primary contact-submit"
           />
         </form>
@@ -371,6 +405,14 @@ const submitContactRequest = async () => {
 .contact-status a {
   color: inherit;
   font-weight: 700;
+}
+
+.contact-honeypot {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
 }
 
 .contact-page .contact-submit {

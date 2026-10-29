@@ -59,19 +59,3 @@ export const validateContactRequest = (request) =>
   Object.fromEntries(Object.keys(FIELD_VALIDATORS)
     .map((field) => [field, validateContactField(field, request[field])])
     .filter(([, error]) => error))
-
-export const buildContactMailto = (request, recipient) => {
-  const name = request.name.trim()
-  const body = [
-    `Nombre: ${name}`,
-    `Teléfono: ${request.phone.trim()}`,
-    `Correo: ${request.email.trim()}`,
-    '',
-    request.message.trim()
-  ].join('\n')
-  const query = new URLSearchParams({ subject: `Quiero ser parte de Tiendario - ${name}`, body })
-    .toString()
-    .replaceAll('+', '%20')
-
-  return `mailto:${recipient}?${query}`
-}

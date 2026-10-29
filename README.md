@@ -81,7 +81,8 @@ Variables opcionales:
 | `VITE_BASE_DOMAIN` | Dominio base de las tiendas por subdominio | `tiendario.cloud` |
 | `VITE_DEPLOY_ENV` | Ambiente servido por el build; establecer `dev` en builds de desarrollo | `production` |
 | `VITE_ADMIN_URL` | Destino del botón "Mi tienda" en la bienvenida y el contacto | `https://admin-dev.tiendario.cloud/` |
-| `VITE_CONTACT_EMAIL` | Correo que recibe las consultas del formulario de `/contacto` | `hola@tiendario.cloud` |
+| `VITE_CONTACT_EMAIL` | Correo que recibe vía [FormSubmit](https://formsubmit.co) las consultas de `/contacto`; el primer envío requiere confirmar la activación desde ese correo | `concat.studio.vt@gmail.com` |
+| `VITE_CONTACT_FORM_ID` | Alias de FormSubmit (recibido al activar) que se usa en lugar del correo para no exponerlo | Correo de contacto |
 | `API_PROXY_LOGGING` | Activa logs temporales del proxy en el Worker al usar `true` | Desactivado |
 
 Para diagnosticar el proxy, `API_PROXY_LOGGING=true` registra método, ruta, endpoint upstream, estado y duración, sin tokens, cuerpos ni parámetros de consulta. Desactivalo al terminar.

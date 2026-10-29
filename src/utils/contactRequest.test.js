@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  buildContactMailto,
   createEmptyContactRequest,
   validateContactField,
   validateContactRequest
@@ -33,24 +32,5 @@ describe('validateContactRequest', () => {
 
   it('ignores surrounding whitespace', () => {
     expect(validateContactField('name', '   ')).toBe('Ingresá tu nombre.')
-  })
-})
-
-describe('buildContactMailto', () => {
-  it('encodes the request as a mail draft for the configured recipient', () => {
-    const mailto = buildContactMailto({ ...validRequest, name: ' Ana Pérez ' }, 'hola@tiendario.cloud')
-    const url = new URL(mailto)
-
-    expect(url.protocol).toBe('mailto:')
-    expect(url.pathname).toBe('hola@tiendario.cloud')
-    expect(mailto).not.toContain('+')
-    expect(url.searchParams.get('subject')).toBe('Quiero ser parte de Tiendario - Ana Pérez')
-    expect(url.searchParams.get('body')).toBe([
-      'Nombre: Ana Pérez',
-      'Teléfono: +54 9 11 1234-5678',
-      'Correo: ana@correo.com',
-      '',
-      'Tengo una librería y quiero vender online.'
-    ].join('\n'))
   })
 })

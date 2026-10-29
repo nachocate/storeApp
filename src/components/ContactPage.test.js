@@ -4,8 +4,11 @@ import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
 import Textarea from 'primevue/textarea'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import ContactPage from './ContactPage.vue'
+import { sendContactRequest } from '../services/contactService.js'
+
+vi.mock('../services/contactService.js', () => ({ sendContactRequest: vi.fn() }))
 
 let app
 
@@ -33,11 +36,21 @@ const submit = async (container) => {
   container.querySelector('form').dispatchEvent(new Event('submit', { cancelable: true }))
   await nextTick()
   await nextTick()
+  await new Promise((resolve) => setTimeout(resolve))
+  await nextTick()
+}
+
+const fillValidRequest = async (container) => {
+  await fill(container, 'name', 'Ana Pérez')
+  await fill(container, 'phone', '11 1234 5678')
+  await fill(container, 'email', 'ana@correo.com')
+  await fill(container, 'message', 'Tengo una librería en el centro.')
 }
 
 afterEach(() => {
   app?.unmount()
   document.body.innerHTML = ''
+  vi.clearAllMocks()
 })
 
 describe('ContactPage', () => {
@@ -67,19 +80,46 @@ describe('ContactPage', () => {
     expect(nameInput.getAttribute('aria-invalid')).toBe('true')
     expect(nameInput.getAttribute('aria-describedby')).toBe('contact-name-error')
     expect(document.activeElement).toBe(nameInput)
+    expect(sendContactRequest).not.toHaveBeenCalled()
   })
 
-  it('keeps the entered data and confirms when the request is valid', async () => {
+  it('sends a valid request and clears the form', async () => {
+    sendContactRequest.mockResolvedValue()
     const container = render()
 
-    await fill(container, 'name', 'Ana Pérez')
-    await fill(container, 'phone', '11 1234 5678')
-    await fill(container, 'email', 'ana@correo.com')
-    await fill(container, 'message', 'Tengo una librería en el centro.')
+    await fillValidRequest(container)
     await submit(container)
 
+    expect(sendContactRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Ana Pérez', email: 'ana@correo.com' }),
+      'concat.studio.vt@gmail.com'
+    )
+    expect(container.querySelector('.contact-status').textContent).toContain('Recibimos tu consulta')
+    expect(container.querySelector('#contact-name').value).toBe('')
     expect(container.querySelectorAll('.contact-field-error')).toHaveLength(0)
-    expect(container.querySelector('.contact-status').textContent).toContain('hola@tiendario.cloud')
+  })
+
+  it('keeps the entered data and offers an alternative when sending fails', async () => {
+    sendContactRequest.mockRejectedValue(new Error('network'))
+    const container = render()
+
+    await fillValidRequest(container)
+    await submit(container)
+
+    const status = container.querySelector('.contact-status')
+    expect(status.getAttribute('role')).toBe('alert')
+    expect(status.textContent).toContain('concat.studio.vt@gmail.com')
     expect(container.querySelector('#contact-name').value).toBe('Ana Pérez')
+  })
+
+  it('does not send requests flagged by the honeypot', async () => {
+    const container = render()
+
+    await fillValidRequest(container)
+    await fill(container, 'honey', 'spam')
+    await submit(container)
+
+    expect(sendContactRequest).not.toHaveBeenCalled()
+    expect(container.querySelector('.contact-status').textContent).toContain('Recibimos tu consulta')
   })
 })
