@@ -75,7 +75,7 @@ describe('useVisitorCart', () => {
     expect(options.headers).not.toHaveProperty('X-Cart-Token')
     expect(url).not.toContain('opaque-token')
     expect(mountedCart.cart.cartToken.value).toBe('opaque-token')
-    expect(JSON.parse(localStorage.getItem('vitrinapp-cart-almacen-demo'))).toMatchObject({
+    expect(JSON.parse(localStorage.getItem('tiendario-cart-almacen-demo'))).toMatchObject({
       token: 'opaque-token',
       revision: 0,
       items: []
@@ -84,7 +84,7 @@ describe('useVisitorCart', () => {
 
   it('does not treat another store slug cart as the current cart', () => {
     mountedCart = createMountedCart()
-    localStorage.setItem('vitrinapp-cart-cafe-del-barrio', JSON.stringify({
+    localStorage.setItem('tiendario-cart-cafe-del-barrio', JSON.stringify({
       token: 'another-store-token',
       items: [{ id: 'product-1', quantity: 2 }]
     }))
@@ -350,7 +350,7 @@ describe('useVisitorCart', () => {
   })
 
   it('replaces an expired cart automatically without exposing an error', async () => {
-    localStorage.setItem('vitrinapp-cart-almacen-demo', JSON.stringify({
+    localStorage.setItem('tiendario-cart-almacen-demo', JSON.stringify({
       token: 'expired-token',
       revision: 3,
       items: [{ id: 'product-1', quantity: 2 }]
@@ -383,7 +383,7 @@ describe('useVisitorCart', () => {
     expect(mountedCart.cart.cartToken.value).toBe('replacement-token')
     expect(mountedCart.cart.cartItems.value).toEqual([])
     expect(mountedCart.cart.cartError.value).toBe('')
-    expect(JSON.parse(localStorage.getItem('vitrinapp-cart-almacen-demo'))).toMatchObject({
+    expect(JSON.parse(localStorage.getItem('tiendario-cart-almacen-demo'))).toMatchObject({
       token: 'replacement-token',
       revision: 0,
       items: []

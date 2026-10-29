@@ -1,7 +1,7 @@
 const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
 const storageKey = (storeSlug, publicOrderId) =>
-  `vitrinapp-order-tracking-${encodeURIComponent(storeSlug)}-${encodeURIComponent(publicOrderId)}`
+  `tiendario-order-tracking-${encodeURIComponent(storeSlug)}-${encodeURIComponent(publicOrderId)}`
 
 export const rememberOrderTrackingToken = (
   storeSlug,

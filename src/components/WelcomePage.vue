@@ -1,41 +1,107 @@
 <script setup>
+import { ref } from 'vue'
 import logoUrl from '../assets/logo.svg'
+import { CONTACT_PATH } from '../config/store.js'
+import TiendarioHeader from './TiendarioHeader.vue'
+
+const REPEL_RADIUS = 260
+const MAX_REPEL_DISTANCE = 48
+// [left %, top %, size rem, rotation deg]
+const STORE_MARK_LAYOUT = [
+  [3, 4, 3.5, -10], [16, 8, 4.5, 12], [30, 2, 3, -6], [44, 7, 4, 9],
+  [57, 3, 5, -12], [71, 9, 3.5, 15], [84, 2, 4.5, -5], [95, 10, 3, 10],
+  [8, 24, 4, 7], [22, 28, 3, -14], [36, 22, 5, -4], [50, 27, 3.5, 13],
+  [64, 21, 4, -9], [77, 27, 6, 9], [91, 23, 3.5, -16],
+  [2, 44, 5, -8], [15, 48, 3.5, 16], [29, 42, 4, 6], [43, 47, 3, -11],
+  [56, 41, 4.5, 14], [70, 46, 3.5, -17], [85, 43, 5.5, -10],
+  [9, 64, 3.5, 11], [23, 68, 4.5, -7], [37, 62, 3, 18], [51, 67, 4, -13],
+  [63, 63, 3.5, 8], [76, 69, 4.5, 12], [92, 62, 3.5, -6],
+  [3, 84, 4, -12], [17, 88, 3, 9], [31, 82, 4.5, -5], [45, 87, 3.5, 15],
+  [59, 83, 4, -9], [72, 88, 3, 6], [86, 82, 4.5, 15], [97, 86, 3.5, -8]
+]
+
+const storeMarks = STORE_MARK_LAYOUT.map(([left, top, size, rotation], index) => ({
+  id: index + 1,
+  left,
+  top,
+  size,
+  rotation,
+  delay: -((index * 0.7) % 6),
+  compact: index % 2 === 0
+}))
+const markElements = []
+const markOffsets = ref(storeMarks.map(() => ({ x: 0, y: 0 })))
+
+const getRepelOffset = (element, pointerX, pointerY) => {
+  if (!element || element.offsetParent === null) return { x: 0, y: 0 }
+
+  // offset* ignores transforms, so the distance uses each logo's resting position.
+  const deltaX = element.offsetLeft + element.offsetWidth / 2 - pointerX
+  const deltaY = element.offsetTop + element.offsetHeight / 2 - pointerY
+  const distance = Math.hypot(deltaX, deltaY)
+  if (distance >= REPEL_RADIUS || distance === 0) return { x: 0, y: 0 }
+
+  const strength = (1 - distance / REPEL_RADIUS) ** 2 * MAX_REPEL_DISTANCE
+  return { x: (deltaX / distance) * strength, y: (deltaY / distance) * strength }
+}
+
+const updateStoreMarks = (event) => {
+  if (event.pointerType !== 'mouse' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+
+  const bounds = event.currentTarget.getBoundingClientRect()
+  const pointerX = event.clientX - bounds.left
+  const pointerY = event.clientY - bounds.top
+  markOffsets.value = markElements.map((element) => getRepelOffset(element, pointerX, pointerY))
+}
+
+const resetStoreMarks = () => {
+  markOffsets.value = storeMarks.map(() => ({ x: 0, y: 0 }))
+}
+
+const getStoreMarkStyle = (mark, index) => {
+  const offset = markOffsets.value[index] ?? { x: 0, y: 0 }
+  return {
+    left: `${mark.left}%`,
+    top: `${mark.top}%`,
+    '--mark-size': `${mark.size}rem`,
+    rotate: `${mark.rotation}deg`,
+    animationDelay: `${mark.delay}s`,
+    transform: `translate(${offset.x}px, ${offset.y}px)`
+  }
+}
 </script>
 
 <template>
-  <main class="welcome-page">
-    <header class="welcome-nav">
-      <a class="brand" href="/" aria-label="Tiendario, inicio">
-        <img class="brand-logo" :src="logoUrl" alt="" aria-hidden="true" />
-        <span class="brand-symbol" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none">
-            <path d="M3 10h18l-1.4-5H4.4L3 10Z" />
-            <path d="M5 10v10h14V10M9 20v-6h6v6M3 10c0 1.1.9 2 2 2s2-.9 2-2c0 1.1.9 2 2 2s2-.9 2-2c0 1.1.9 2 2 2s2-.9 2-2c0 1.1.9 2 2 2s2-.9 2-2c0 1.1.9 2 2 2s2-.9 2-2" />
-          </svg>
-        </span>
-        <span>Tiendario</span>
-      </a>
-      <span class="nav-note">Un lugar para el comercio independiente</span>
-    </header>
+  <main class="tiendario-site welcome-page">
+    <TiendarioHeader />
 
-    <section class="welcome-hero" aria-labelledby="welcome-title">
-      <div class="hero-photo" role="img" aria-label="Puestos de un mercado local llenos de productos frescos"></div>
-      <div class="hero-shade"></div>
+    <section
+      class="welcome-hero"
+      aria-labelledby="welcome-title"
+      @pointermove="updateStoreMarks"
+      @pointerleave="resetStoreMarks"
+    >
+      <div class="hero-shade" aria-hidden="true"></div>
+      <div class="hero-store-marks" aria-hidden="true">
+        <img
+          v-for="(mark, index) in storeMarks"
+          :key="mark.id"
+          :ref="(element) => { markElements[index] = element }"
+          :src="logoUrl"
+          :class="['hero-store-mark', { 'hero-store-mark--wide-only': !mark.compact }]"
+          :style="getStoreMarkStyle(mark, index)"
+          alt=""
+        />
+      </div>
       <div class="hero-content">
-        <h1 id="welcome-title">Descubrí lo que<br />hace única a tu ciudad</h1>
+        <h1 id="welcome-title">Un lugar para el comercio independiente</h1>
+        <p>Modernizamos tu tienda online. Diseños rápidos e intuitivos enfocados en potenciar tus ventas y brindar una experiencia de compra impecable.</p>
         <div class="hero-actions">
           <Button
-            type="button"
-            label="Tiendas que trabajan con nosotros"
-            severity="secondary"
-            class="button-light"
-          />
-          <Button
-            type="button"
-            label="Registrarse"
-            severity="secondary"
-            outlined
-            class="button-outline"
+            as="a"
+            :href="CONTACT_PATH"
+            label="Quiero ser parte"
+            class="tiendario-button tiendario-button--outline"
           />
         </div>
       </div>
@@ -44,93 +110,78 @@ import logoUrl from '../assets/logo.svg'
 </template>
 
 <style scoped>
-.welcome-page {
-  --ink: #202c25;
-  --paper: #f6f5ef;
-  min-height: 100vh;
-  padding: 0 clamp(1.25rem, 5vw, 5rem);
-  background: var(--paper);
-  color: var(--ink);
-  font-family: 'Montserrat', sans-serif;
-}
-
-.welcome-nav {
-  display: flex;
-  min-height: 5.5rem;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1.5rem;
-}
-
-.brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.65rem;
-  color: var(--ink);
-  font-size: 1.4rem;
-  font-weight: 700;
-  text-decoration: none;
-}
-
-.brand-logo {
-  display: block;
-  width: 2rem;
-  height: 2.25rem;
-  flex: 0 0 auto;
-  object-fit: contain;
-}
-
-.brand-symbol {
-  display: none;
-}
-
-.nav-note {
-  color: #68736b;
-  font-size: 0.78rem;
-}
-
 .welcome-hero {
   position: relative;
   display: flex;
-  min-height: min(80vh, 680px);
+  flex: 1 0 auto;
+  min-height: min(70vh, 680px);
   align-items: center;
+  isolation: isolate;
   overflow: hidden;
-  background: #32463c;
-  color: #fff;
+  background: var(--tiendario-secondary);
+  color: var(--paper);
   border-radius: 20px;
 }
 
-.hero-photo,
-.hero-shade {
+.hero-store-marks {
   position: absolute;
+  z-index: 1;
   inset: 0;
+  overflow: hidden;
+  pointer-events: none;
 }
 
-.hero-photo {
-  background-image: url('https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=2200&q=85');
-  background-position: center 54%;
-  background-size: cover;
-  transform: scale(1.01);
+.hero-store-mark {
+  position: absolute;
+  display: block;
+  width: calc(var(--mark-size) * var(--mark-scale, 1));
+  height: auto;
+  margin: calc(var(--mark-size) * var(--mark-scale, 1) / -2) 0 0 calc(var(--mark-size) * var(--mark-scale, 1) / -2);
+  padding: 0.45rem;
+  border: 1px solid rgb(250 250 250 / 30%);
+  border-radius: 0.8rem;
+  background: rgb(250 250 250 / 20%);
+  box-shadow: 0 12px 24px rgb(0 0 0 / 16%);
+  opacity: 0.6;
+  transition: transform 450ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: store-mark-float 6s ease-in-out infinite alternate;
 }
 
-.hero-shade {
-  background: linear-gradient(90deg, rgba(18, 34, 26, 0.84) 0%, rgba(18, 34, 26, 0.66) 45%, rgba(18, 34, 26, 0.12) 100%);
-}
+
+
+
+
+
+
+
+
+
+
+
 
 .hero-content {
   position: relative;
-  z-index: 1;
+  z-index: 2;
   width: min(760px, 78%);
   padding: clamp(3rem, 8vw, 7rem);
+  border: 1px solid rgb(255 255 255 / 24%);
+  border-radius: 24px;
+  background: rgb(255 255 255 / 9%);
+  box-shadow: 0 24px 70px rgb(0 0 0 / 12%), inset 0 1px 0 rgb(255 255 255 / 24%);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   animation: arrive 650ms ease-out both;
+  container-type: inline-size;
 }
 
 .hero-content h1 {
   max-width: 15ch;
   margin: 0;
-  font-size: 4rem;
+  /* "independiente" is ~7.7em wide, so the size follows the panel's inner width to avoid overflow. */
+  font-size: clamp(1.75rem, 12cqi, 4rem);
   font-weight: 700;
   line-height: 0.99;
+  overflow-wrap: break-word;
 }
 
 .hero-actions {
@@ -140,33 +191,25 @@ import logoUrl from '../assets/logo.svg'
   margin-top: 2rem;
 }
 
-.hero-actions :deep(.p-button) {
-  min-height: 3.1rem;
-  border-radius: 20px;
-  font-size: 0.86rem;
-  font-weight: 700;
+.hero-shade {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 82% 18%, rgb(255 255 255 / 28%), transparent 34%),
+    radial-gradient(ellipse at 12% 100%, rgb(0 0 0 / 14%), transparent 42%),
+    linear-gradient(125deg, rgb(255 255 255 / 8%), transparent 54%);
+  pointer-events: none;
 }
 
-.hero-actions :deep(.button-light) {
-  background: #f6f5ef;
-  border-color: #f6f5ef;
-  color: #26372d;
-}
-
-.hero-actions :deep(.button-outline) {
-  border-color: rgba(255, 255, 255, 0.72);
-  background: transparent;
-  color: white;
-}
-
-.hero-actions :deep(.p-button:hover) {
-  filter: brightness(0.92);
-}
-
-.hero-actions :deep(.p-button:focus-visible),
-.brand:focus-visible {
-  outline: 3px solid #efb879;
-  outline-offset: 4px;
+.hero-shade::before {
+  position: absolute;
+  content: '';
+  inset: 0;
+  background: linear-gradient(112deg, transparent 34%, rgb(255 255 255 / 10%) 49%, transparent 64%);
+  transform: translateX(-100%);
+  animation: hero-glint 8s ease-in-out infinite;
 }
 
 @keyframes arrive {
@@ -174,30 +217,34 @@ import logoUrl from '../assets/logo.svg'
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes store-mark-float {
+  from { translate: 0 10px; }
+  to { translate: 0 -10px; }
+}
+
+@keyframes hero-glint {
+  0%, 30% { transform: translateX(-100%); }
+  75%, 100% { transform: translateX(100%); }
+}
+
+@media (max-width: 1024px) {
+  .hero-store-mark {
+    --mark-scale: 0.8;
+  }
+}
+
 @media (max-width: 640px) {
-  .welcome-page {
-    padding: 0 1rem;
-  }
-
-  .welcome-nav {
-    min-height: 4.5rem;
-  }
-
-  .nav-note {
-    max-width: 10rem;
-    text-align: right;
-  }
-
   .welcome-hero {
     min-height: 65vh;
   }
 
-  .hero-photo {
-    background-position: 58% center;
+  .hero-store-mark {
+    --mark-scale: 0.62;
+    opacity: 0.42;
   }
 
-  .hero-shade {
-    background: linear-gradient(90deg, rgba(18, 34, 26, 0.84), rgba(18, 34, 26, 0.42));
+  .hero-store-mark--wide-only {
+    display: none;
   }
 
   .hero-content {
@@ -205,24 +252,21 @@ import logoUrl from '../assets/logo.svg'
     padding: 2rem 1.25rem 4rem;
   }
 
-  .hero-content h1 {
-    font-size: 2.5rem;
-  }
-
   .hero-actions {
     align-items: stretch;
     flex-direction: column;
   }
-
-  .hero-actions :deep(.p-button) {
-    width: 100%;
-  }
-
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hero-content {
+  .hero-content,
+  .hero-store-mark,
+  .hero-shade::before {
     animation: none;
+  }
+
+  .hero-store-mark {
+    transition: none;
   }
 }
 </style>

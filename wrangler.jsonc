@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "storeapp",
+  "name": "tiendario",
   "keep_vars": true,
   "main": "./worker/index.js",
   "compatibility_date": "2026-10-16",

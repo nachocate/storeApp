@@ -7,9 +7,12 @@ import { setCatalogPrices } from './utils/formatCurrency.js'
 import { normalizePromotions } from './utils/normalizePromotion.js'
 import CheckoutPage from './components/CheckoutPage.vue'
 import WelcomePage from './components/WelcomePage.vue'
+import SiteFooter from './components/SiteFooter.vue'
+import ContactPage from './components/ContactPage.vue'
 import storeInfo from './data/store-info.json'
 import { requestStoreApi } from './api/store.js'
 import {
+  IS_CONTACT_PAGE,
   IS_ENVIRONMENT_MISMATCH,
   IS_HOME,
   REQUESTED_PUBLIC_ORDER_ID,
@@ -28,6 +31,7 @@ import { isValidEmail } from './utils/invoiceData.js'
 import { isStoreCurrentlyOpen, normalizeWeeklyHours } from './utils/storeHours.js'
 import { blendColors, getContrastColor, getReadableColor, LIGHT_TEXT_COLOR } from './utils/contrast.js'
 const isHome = IS_HOME
+const isContactPage = IS_CONTACT_PAGE
 const environmentMismatch = IS_ENVIRONMENT_MISMATCH
 const orderTrackingTokenFromLink = consumeOrderTrackingTokenFromHash({
   storeSlug: STORE_SLUG,
@@ -59,7 +63,7 @@ watch(storeNotFound, (notFound) => {
   if (notFound && typeof document !== 'undefined') document.title = 'Tienda no encontrada | 404'
 })
 watch(storeError, (error) => {
-  if (error && typeof document !== 'undefined') document.title = 'Algo salió mal | VitrinApp'
+  if (error && typeof document !== 'undefined') document.title = 'Algo salió mal | Tiendario'
 })
 watch(() => branding.backgroundColor, (backgroundColor) => {
   if (isHome || typeof document === 'undefined') return
@@ -68,7 +72,7 @@ watch(() => branding.backgroundColor, (backgroundColor) => {
     backgroundColor || storeInfo.branding.backgroundColor
   )
 }, { immediate: true })
-if (isHome && typeof document !== 'undefined') document.title = 'VitrinApp | Tiendas locales'
+if (isHome && typeof document !== 'undefined') document.title = isContactPage ? 'Contacto | Tiendario' : 'Tiendario'
 if (environmentMismatch && typeof document !== 'undefined') document.title = 'Tienda no encontrada | 404'
 const storeLogoModules = import.meta.glob('./assets/**/*.{png,jpg,jpeg,svg,webp}', {
   query: '?url',
@@ -181,6 +185,7 @@ const storeThemeStyle = computed(() => {
     '--primary-on-background-color': getReadableColor(primaryColor, [backgroundColor]),
     '--primary-on-secondary-color': getReadableColor(primaryColor, [secondaryColor]),
     '--background-color': backgroundColor,
+    '--background-text-color': isHome ? 'var(--ink)' : getContrastColor(backgroundColor),
     '--banner-image': bannerImageUrl.value ? `url(${bannerImageUrl.value})` : 'none',
     '--banner-overlay': `color-mix(in srgb, ${primaryColor} 25%, transparent)`,
     '--banner-text-color': bannerTextColor,
@@ -766,15 +771,16 @@ onBeforeUnmount(() => {
 
 <template>
   <head>
-    <title>{{ isHome ? 'VitrinApp | Tiendas locales' : storeNotFound || environmentMismatch ? 'Tienda no encontrada | 404' : storeError ? 'Algo salió mal | VitrinApp' : storeName || 'Cargando tienda' }}</title>
-    <meta name="description" :content="isHome ? 'Descubre tiendas independientes en VitrinApp.' : `Bienvenido a ${storeName}, tu tienda en línea de confianza.`">
-    <meta name="keywords" content="ecommerce, tienda online, compras, productos frescos, frutas, verduras">
+    <title>{{ isContactPage ? 'Contacto | Tiendario' : isHome ? 'Tiendario' : storeNotFound || environmentMismatch ? 'Tienda no encontrada | 404' : storeError ? 'Algo salió mal | Tiendario' : storeName || 'Cargando tienda' }}</title>
+    <meta name="description" :content="isHome ? 'Sumate a Tiendario.' : `Bienvenido a ${storeName}, tu tienda en línea de confianza.`">
+    <meta name="keywords" :content="isHome ? 'Tiendario, tienda online, ecommerce, comercio local, comercio independiente, vender online' : `${storeName}, tienda online, compras online, ecommerce, comercio local`">
     <meta name="author" :content="storeName">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
   </head>
   <body>
     <main id="app" :style="storeThemeStyle" :class="{ 'home-shell': isHome }">
-      <WelcomePage v-if="isHome" />
+      <ContactPage v-if="isContactPage" />
+      <WelcomePage v-else-if="isHome" />
       <section v-else-if="(storeNotFound || environmentMismatch) && !checkoutOpen" class="store-status">
         <Message severity="error" :closable="false" class="store-status-message">
           <div>
@@ -1146,6 +1152,7 @@ onBeforeUnmount(() => {
         </div>
       </Drawer>
       </template>
+      <SiteFooter />
       <ScrollIndicators />
     </main>
   </body>
@@ -1176,7 +1183,7 @@ onBeforeUnmount(() => {
     min-height: 100vh;
     gap: 0;
     padding: 0;
-    background: #f6f5ef;
+    background: var(--paper);
   }
 
   .store-status {

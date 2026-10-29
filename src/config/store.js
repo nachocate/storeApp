@@ -85,11 +85,22 @@ const foreignSubdomain = resolveForeignSubdomain(currentHostname)
 export const IS_ENVIRONMENT_MISMATCH = Boolean(foreignSubdomain)
 // Path-based slugs remain only for hosts outside the base domain (local development).
 const usesPathSlug = !isBaseDomainHost(currentHostname)
-const pathnameSegments = globalThis.window?.location.pathname.split('/').filter(Boolean) ?? []
-const requestedSlug = subdomainSlug || (usesPathSlug ? pathnameSegments[0] : '')
+const currentPathname = globalThis.window?.location.pathname ?? ''
+const pathnameSegments = currentPathname.split('/').filter(Boolean)
+
+export const CONTACT_PATH = '/contacto'
+
+export const isContactPath = (pathname = '') => {
+  const segments = pathname.split('/').filter(Boolean)
+  return segments.length === 1 && segments[0].toLowerCase() === CONTACT_PATH.slice(1)
+}
+
+const isCurrentContactPath = !subdomainSlug && !foreignSubdomain && isContactPath(currentPathname)
+const requestedSlug = subdomainSlug || (usesPathSlug && !isCurrentContactPath ? pathnameSegments[0] : '')
 let storeSlug = 'almacen-demo'
 
 export const IS_HOME = !requestedSlug
+export const IS_CONTACT_PAGE = IS_HOME && isCurrentContactPath
 
 export const buildStorePath = (slug, pathBased = usesPathSlug) =>
   pathBased ? `/${encodeURIComponent(slug)}` : '/'

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   resolveApiBaseUrl,
   buildOrderTrackingPath,
+  isContactPath,
   resolveDeployEnv,
   resolveForeignSubdomain,
   resolveRequestedOrderId,
@@ -55,6 +56,16 @@ describe('resolveSubdomainSlug', () => {
     expect(resolveSubdomainSlug('www.tiendario.cloud', base)).toBe('')
     expect(resolveSubdomainSlug('a.b.tiendario.cloud', base)).toBe('')
     expect(resolveSubdomainSlug('localhost', base)).toBe('')
+  })
+})
+
+describe('isContactPath', () => {
+  it('matches only the Tiendario contact page path', () => {
+    expect(isContactPath('/contacto')).toBe(true)
+    expect(isContactPath('/Contacto/')).toBe(true)
+    expect(isContactPath('/')).toBe(false)
+    expect(isContactPath('/almacen-demo')).toBe(false)
+    expect(isContactPath('/contacto/orders/42')).toBe(false)
   })
 })
 

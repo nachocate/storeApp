@@ -5,7 +5,7 @@ import { formatCurrency } from '../utils/formatCurrency.js'
 import { formatQuantity, roundQuantity } from '../utils/quantityRules.js'
 import { getBundleErrorMessage } from '../utils/normalizePromotion.js'
 
-const CART_STORAGE_KEY = `vitrinapp-cart-${encodeURIComponent(STORE_SLUG)}`
+const CART_STORAGE_KEY = `tiendario-cart-${encodeURIComponent(STORE_SLUG)}`
 
 export const useVisitorCart = ({ products }) => {
   const cartToken = ref('')

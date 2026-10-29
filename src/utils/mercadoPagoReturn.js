@@ -1,7 +1,7 @@
 const RETURN_TTL_MS = 24 * 60 * 60 * 1000
 
 const returnStorageKey = (storeSlug) =>
-  `vitrinapp-mercadopago-return-${encodeURIComponent(storeSlug)}`
+  `tiendario-mercadopago-return-${encodeURIComponent(storeSlug)}`
 
 const getStorages = (storage) => {
   if (storage) return [storage]

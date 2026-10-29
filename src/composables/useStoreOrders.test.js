@@ -41,8 +41,8 @@ describe('useStoreOrders', () => {
       orderTrackingToken: 'private-token'
     })
 
-    expect(localStorage.getItem('vitrinapp-orders-almacen-demo')).toContain('private-token')
-    expect(localStorage.getItem('vitrinapp-orders-another-store')).toBeNull()
+    expect(localStorage.getItem('tiendario-orders-almacen-demo')).toContain('private-token')
+    expect(localStorage.getItem('tiendario-orders-another-store')).toBeNull()
     expect(mountedOrders.storeOrders.orders.value[0].expiresAt).toBe(1000 + 30 * 24 * 60 * 60 * 1000)
   })
 
@@ -67,7 +67,7 @@ describe('useStoreOrders', () => {
       unitSymbol: 'u',
       decimalScale: 0
     }])
-    expect(JSON.parse(localStorage.getItem('vitrinapp-orders-almacen-demo'))[0].items[0].name)
+    expect(JSON.parse(localStorage.getItem('tiendario-orders-almacen-demo'))[0].items[0].name)
       .toBe('Café')
   })
 
@@ -80,7 +80,7 @@ describe('useStoreOrders', () => {
     })
 
     expect(sessionStorage.length).toBeGreaterThan(0)
-    expect(sessionStorage.getItem('vitrinapp-order-tracking-almacen-demo-public-id-42'))
+    expect(sessionStorage.getItem('tiendario-order-tracking-almacen-demo-public-id-42'))
       .toContain('private-token')
   })
 
@@ -97,7 +97,7 @@ describe('useStoreOrders', () => {
     })
 
     expect(mountedOrders.storeOrders.orders.value[0].mercadoPagoCheckoutUrl).toBe(checkoutUrl)
-    expect(JSON.parse(localStorage.getItem('vitrinapp-orders-almacen-demo'))[0].mercadoPagoCheckoutUrl)
+    expect(JSON.parse(localStorage.getItem('tiendario-orders-almacen-demo'))[0].mercadoPagoCheckoutUrl)
       .toBe(checkoutUrl)
   })
 
@@ -211,7 +211,7 @@ describe('useStoreOrders', () => {
       canChangePaymentMethod: true
     })
     expect(sharedOrder.orderTrackingToken).toBe('email-token')
-    expect(JSON.parse(localStorage.getItem('vitrinapp-orders-almacen-demo'))).toEqual([])
+    expect(JSON.parse(localStorage.getItem('tiendario-orders-almacen-demo'))).toEqual([])
 
     await expect(mountedOrders.storeOrders.syncOrder(42)).resolves.toBe('ok')
 
@@ -222,7 +222,7 @@ describe('useStoreOrders', () => {
       orderTrackingToken: 'email-token'
     })
     expect(sharedOrder.orderStatus).toBe('PREPARING')
-    expect(JSON.parse(localStorage.getItem('vitrinapp-orders-almacen-demo'))).toEqual([])
+    expect(JSON.parse(localStorage.getItem('tiendario-orders-almacen-demo'))).toEqual([])
   })
 
   it('does not look up an order by public ID without a tracking token', async () => {
@@ -262,7 +262,7 @@ describe('useStoreOrders', () => {
       paymentProvider: 'MERCADO_PAGO',
       shared: false
     })
-    expect(JSON.parse(localStorage.getItem('vitrinapp-orders-almacen-demo'))[0])
+    expect(JSON.parse(localStorage.getItem('tiendario-orders-almacen-demo'))[0])
       .toMatchObject({ orderId: 42, publicOrderId: 'public-id-42', orderStatus: 'PENDING_PAYMENT' })
   })
 
@@ -284,7 +284,7 @@ describe('useStoreOrders', () => {
         shared: true
       })
     ])
-    expect(JSON.parse(localStorage.getItem('vitrinapp-orders-almacen-demo'))).toEqual([])
+    expect(JSON.parse(localStorage.getItem('tiendario-orders-almacen-demo'))).toEqual([])
   })
 
   it('rejects a token that resolves to a different public order ID', async () => {
@@ -302,7 +302,7 @@ describe('useStoreOrders', () => {
       orderTrackingToken: 'email-token'
     })
     expect(mountedOrders.storeOrders.orders.value).toEqual([])
-    expect(sessionStorage.getItem('vitrinapp-order-tracking-almacen-demo-public-id-42')).toBeNull()
+    expect(sessionStorage.getItem('tiendario-order-tracking-almacen-demo-public-id-42')).toBeNull()
   })
 
   it('removes an order from local storage while preserving other saved orders', () => {
@@ -313,7 +313,7 @@ describe('useStoreOrders', () => {
     mountedOrders.storeOrders.removeOrder(42)
 
     expect(mountedOrders.storeOrders.orders.value.map((order) => order.orderId)).toEqual([43])
-    expect(JSON.parse(localStorage.getItem('vitrinapp-orders-almacen-demo')).map((order) => order.orderId))
+    expect(JSON.parse(localStorage.getItem('tiendario-orders-almacen-demo')).map((order) => order.orderId))
       .toEqual([43])
   })
 
@@ -506,7 +506,7 @@ describe('useStoreOrders', () => {
     await expect(mountedOrders.storeOrders.cancelOrder(42)).resolves.toBe('unavailable')
 
     expect(mountedOrders.storeOrders.orders.value).toEqual([])
-    expect(JSON.parse(localStorage.getItem('vitrinapp-orders-almacen-demo'))).toEqual([])
+    expect(JSON.parse(localStorage.getItem('tiendario-orders-almacen-demo'))).toEqual([])
   })
 
   it('stores the status timeline returned by the tracking endpoint', async () => {
@@ -559,7 +559,7 @@ describe('useStoreOrders', () => {
   })
 
   it('purges expired records and records with completed status during restore', () => {
-    localStorage.setItem('vitrinapp-orders-almacen-demo', JSON.stringify([
+    localStorage.setItem('tiendario-orders-almacen-demo', JSON.stringify([
       { orderId: 1, orderTrackingToken: 'expired', expiresAt: 999 },
       { orderId: 2, orderTrackingToken: 'done', expiresAt: 2000, orderStatus: 'COMPLETED' },
       { orderId: 3, orderTrackingToken: 'active', expiresAt: 2000, orderStatus: 'PREPARING' }

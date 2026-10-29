@@ -7,10 +7,15 @@
 :root {
   font-family: Montserrat, Helvetica, Arial, sans-serif;
   line-height: 1.5;
-  color: #333;
+  color: #262626;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  --tiendario-primary: #df6847;
+  --tiendario-secondary: #255c99;
+  --ink: #262626;
+  --paper: #fafafa;
 
   --status-success: #15803d;
   --status-success-soft: #dcfce7;

@@ -1,4 +1,4 @@
-# storeApp
+# Tiendario
 
 Storefront multitienda construida con Vue 3 y Vite. Cada tienda carga su catálogo, configuración, promociones y pedidos desde la API.
 
@@ -80,6 +80,8 @@ Variables opcionales:
 | --- | --- | --- |
 | `VITE_BASE_DOMAIN` | Dominio base de las tiendas por subdominio | `tiendario.cloud` |
 | `VITE_DEPLOY_ENV` | Ambiente servido por el build; establecer `dev` en builds de desarrollo | `production` |
+| `VITE_ADMIN_URL` | Destino del botón "Mi tienda" en la bienvenida y el contacto | `https://admin-dev.tiendario.cloud/` |
+| `VITE_CONTACT_EMAIL` | Correo que recibe las consultas del formulario de `/contacto` | `hola@tiendario.cloud` |
 | `API_PROXY_LOGGING` | Activa logs temporales del proxy en el Worker al usar `true` | Desactivado |
 
 Para diagnosticar el proxy, `API_PROXY_LOGGING=true` registra método, ruta, endpoint upstream, estado y duración, sin tokens, cuerpos ni parámetros de consulta. Desactivalo al terminar.

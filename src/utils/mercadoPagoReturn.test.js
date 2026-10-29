@@ -44,7 +44,7 @@ describe('Mercado Pago return tracking', () => {
   })
 
   it('keeps the return marker in local storage when session storage is cleared', () => {
-    const key = 'vitrinapp-mercadopago-return-store-a'
+    const key = 'tiendario-mercadopago-return-store-a'
     sessionStorage.removeItem(key)
     localStorage.removeItem(key)
 

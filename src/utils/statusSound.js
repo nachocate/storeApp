@@ -1,4 +1,4 @@
-const MUTE_STORAGE_KEY = 'vitrinapp-order-sound-muted'
+const MUTE_STORAGE_KEY = 'tiendario-order-sound-muted'
 
 export const isStatusSoundMuted = () => {
   try {

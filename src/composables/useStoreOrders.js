@@ -44,7 +44,7 @@ export const useStoreOrders = ({
   apiRequest = requestStoreApi,
   now = () => Date.now()
 } = {}) => {
-  const storageKey = `vitrinapp-orders-${encodeURIComponent(storeSlug)}`
+  const storageKey = `tiendario-orders-${encodeURIComponent(storeSlug)}`
   const orders = ref([])
   const orderErrors = reactive({})
   const transferErrors = reactive({})
