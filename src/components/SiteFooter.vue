@@ -16,7 +16,7 @@ const STUDIO_URL = 'https://concat-studio-web.vercel.app/'
   width: 100%;
   margin-top: auto;
   padding: 1.25rem 1rem;
-  color: var(--background-text-color, var(--ink));
+  color: var(--ink);
   font-size: 0.8rem;
   text-align: center;
 }
@@ -27,7 +27,7 @@ const STUDIO_URL = 'https://concat-studio-web.vercel.app/'
 }
 
 .site-footer a {
-  color: inherit;
+  color: var(--ink);
   font-weight: 700;
   text-decoration: underline;
   text-decoration-thickness: 1px;
