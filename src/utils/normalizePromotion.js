@@ -29,11 +29,16 @@ const readIncludedProducts = (promotion) => readRequirements(promotion).flatMap(
   const name = requirement?.productName ?? requirement?.product?.name ?? requirement?.name
   if (typeof name !== 'string' || !name.trim()) return []
   const variant = requirement?.variantName ?? requirement?.variant?.name
-  const unitSymbol = requirement?.unitSymbol ?? requirement?.product?.unit?.symbol ?? requirement?.unit?.symbol
+  const unitSymbol = requirement?.unitSymbol ?? requirement?.saleUnitSymbol ?? requirement?.product?.saleUnit?.symbol ?? requirement?.product?.unit?.symbol ?? requirement?.unit?.symbol
   return [{
     name: typeof variant === 'string' && variant.trim() ? `${name.trim()} (${variant.trim()})` : name.trim(),
     quantity: formatRequirementQuantity(requirement.quantity ?? requirement.requiredQuantity) || '1',
-    unitSymbol: typeof unitSymbol === 'string' ? unitSymbol.trim() : ''
+    unitSymbol: typeof unitSymbol === 'string' ? unitSymbol.trim() : '',
+    pricingMode: requirement?.pricingMode ?? '',
+    pricingUnitSymbol: requirement?.pricingUnitSymbol ?? '',
+    pricePerKg: readAmount(requirement?.pricePerKg),
+    estimatedUnitWeightKg: readAmount(requirement?.estimatedUnitWeightKg),
+    unitPrice: readAmount(requirement?.unitPrice)
   }]
 })
 

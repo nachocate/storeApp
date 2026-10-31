@@ -100,8 +100,8 @@ describe('ProductCard', () => {
     app.unmount()
   })
 
-  it('shows and adds the only available variant directly from the card', () => {
-    const { app, container, onAddToCart } = render({
+  it('requires choosing even the only available variant from its product page', () => {
+    const { app, container, onOpen } = render({
       product: {
         id: 'shirt',
         name: 'Remera',
@@ -123,12 +123,11 @@ describe('ProductCard', () => {
       quantityLabel: '1 u'
     })
 
-    expect(container.textContent).toContain('Talle: M | Color: Negro')
     const button = container.querySelector('.add-to-cart')
-    expect(button.textContent).toBe('Agregar al carrito')
+    expect(button.textContent).toBe('Elegir opciones')
     button.click()
 
-    expect(onAddToCart).toHaveBeenCalledWith(7)
+    expect(onOpen).toHaveBeenCalledOnce()
     app.unmount()
   })
 })

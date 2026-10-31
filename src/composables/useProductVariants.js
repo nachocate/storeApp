@@ -14,10 +14,7 @@ export const useProductVariants = (getProduct) => {
   const selectedOptions = ref({})
 
   watch(() => [product.value?.id, product.value?.variantConfiguration?.variants], () => {
-    const firstAvailableVariant = availableVariants.value[0]
-    selectedOptions.value = Object.fromEntries(
-      firstAvailableVariant?.selections.map(({ optionName, value }) => [optionName, value]) ?? []
-    )
+    selectedOptions.value = {}
   }, { immediate: true })
 
   const selectedVariant = computed(() => {
@@ -59,11 +56,7 @@ export const useProductVariants = (getProduct) => {
           )
         )
     )
-    if (compatibleVariant) {
-      for (const selection of compatibleVariant.selections) {
-        nextOptions[selection.optionName] = selection.value
-      }
-    }
+    if (!compatibleVariant) return
     selectedOptions.value = nextOptions
   }
 

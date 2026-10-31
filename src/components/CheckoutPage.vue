@@ -720,8 +720,11 @@ const {
                 <strong>{{ item.name }}</strong>
                 <small v-if="item.variantLabel">{{ item.variantLabel }}</small>
                 <span>{{ formatQuantity(item) }}</span>
+                <small v-if="item.pricingMode === 'WEIGHT_BASED_UNIT_PRICE' && item.pricePerKg != null && item.estimatedUnitWeightKg != null">
+                  {{ formatMoney(item.pricePerKg) }}/{{ item.pricingUnitSymbol || 'kg' }} · {{ Number(item.estimatedUnitWeightKg) < 1 ? `${Math.round(Number(item.estimatedUnitWeightKg) * 1000)} g` : `${Number(item.estimatedUnitWeightKg)} kg` }} aprox. por unidad
+                </small>
               </div>
-              <strong>{{ formatMoney(item.pricePerType * item.quantity) }}</strong>
+              <strong>{{ formatMoney(item.lineTotal ?? item.pricePerType * item.quantity) }}</strong>
             </li>
           </ul>
           <div class="summary-totals">

@@ -30,6 +30,7 @@ const {
   availableVariants,
   singleAvailableVariant,
   unitPriceLabel,
+  weightHint,
   variantLabel
 } = useProductCard(() => props.product, () => props.unavailable)
 </script>
@@ -70,10 +71,14 @@ const {
       </div>
       <div class="product-card-actions">
         <p v-if="variantLabel" class="product-variant-label">{{ variantLabel }}</p>
-        <p v-if="unitPriceLabel" class="product-prices"><strong>{{ unitPriceLabel }}</strong></p>
+        <template v-if="weightHint">
+          <p class="product-weight-hint">{{ weightHint }}</p>
+          <p v-if="unitPriceLabel" class="product-prices"><strong>{{ unitPriceLabel }}</strong></p>
+        </template>
+        <p v-else-if="unitPriceLabel" class="product-prices"><strong>{{ unitPriceLabel }}</strong></p>
 
         <Button
-          v-if="product.productType === 'VARIANT' && availableVariants.length > 1"
+          v-if="product.productType === 'VARIANT' && availableVariants.length > 0"
           class="add-to-cart"
           type="button"
           :disabled="storeClosed"
@@ -260,6 +265,14 @@ const {
     font-size: inherit;
     line-height: 1.5;
     text-align: left;
+  }
+
+  .product-weight-hint {
+    width: 100%;
+    margin: 0;
+    color: #4b5563;
+    font-size: 0.82rem;
+    line-height: 1.4;
   }
 
   .product-card .add-to-cart.p-button {

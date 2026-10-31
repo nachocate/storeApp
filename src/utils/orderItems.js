@@ -23,7 +23,7 @@ export const normalizeOrderItems = (items) => {
     const quantity = readQuantity(item.quantity)
     if (!name || quantity === null) return []
 
-    const unit = item.unit ?? product.unit ?? {}
+    const unit = item.saleUnit ?? product.saleUnit ?? item.unit ?? product.unit ?? {}
     const decimalScale = Number.isInteger(unit.decimalScale) && unit.decimalScale >= 0
       ? unit.decimalScale
       : Number.isInteger(item.decimalScale) && item.decimalScale >= 0
@@ -34,8 +34,14 @@ export const normalizeOrderItems = (items) => {
       name,
       variantLabel: readNonEmptyString(item.variantLabel, item.variantName, variant.label, variant.name),
       quantity,
-      unitSymbol: readNonEmptyString(item.unitSymbol, unit.symbol, product.unitSymbol) || 'u',
-      decimalScale
+      unitSymbol: readNonEmptyString(item.saleUnitSymbol, item.unitSymbol, unit.symbol, product.unitSymbol) || 'u',
+      decimalScale: item.pricingMode === 'WEIGHT_BASED_UNIT_PRICE' ? 0 : decimalScale,
+      ...(item.pricingMode === 'WEIGHT_BASED_UNIT_PRICE' ? {
+        pricingMode: item.pricingMode,
+        pricingUnitSymbol: readNonEmptyString(item.pricingUnitSymbol, item.unit?.symbol, product.unit?.symbol),
+        ...(item.pricePerKg == null ? {} : { pricePerKg: item.pricePerKg }),
+        ...(item.estimatedUnitWeightKg == null ? {} : { estimatedUnitWeightKg: item.estimatedUnitWeightKg })
+      } : {})
     }]
   })
 }

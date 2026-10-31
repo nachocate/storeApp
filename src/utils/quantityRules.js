@@ -10,18 +10,25 @@ export const roundQuantity = (value, decimalScale = DEFAULT_DECIMAL_SCALE) =>
 
 // The API defines how each product is sold; without it, whole units are assumed.
 export const readQuantityRules = (product) => {
+  const soldByUnit = product.pricingMode === 'WEIGHT_BASED_UNIT_PRICE'
   const decimalScale = Number.isInteger(product.unit?.decimalScale) && product.unit.decimalScale >= 0
     ? product.unit.decimalScale
     : 0
-  const step = toPositiveNumber(product.quantityIncrement) ?? (decimalScale > 0 ? 0.25 : 1)
+  const saleUnit = product.saleUnit ?? product.unit ?? {}
+  const saleDecimalScale = soldByUnit
+    ? 0
+    : Number.isInteger(saleUnit.decimalScale) && saleUnit.decimalScale >= 0
+      ? saleUnit.decimalScale
+      : decimalScale
+  const step = toPositiveNumber(product.quantityIncrement) ?? (saleDecimalScale > 0 ? 0.25 : 1)
   const minQuantity = toPositiveNumber(product.minimumPurchaseQuantity) ?? step
 
   return {
-    decimalScale,
-    step: roundQuantity(step, Math.max(decimalScale, DEFAULT_DECIMAL_SCALE)),
-    minQuantity: roundQuantity(minQuantity, Math.max(decimalScale, DEFAULT_DECIMAL_SCALE)),
-    unitSymbol: product.unit?.symbol || 'u',
-    unitName: product.unit?.name ?? ''
+    decimalScale: saleDecimalScale,
+    step: roundQuantity(step, Math.max(saleDecimalScale, DEFAULT_DECIMAL_SCALE)),
+    minQuantity: roundQuantity(minQuantity, Math.max(saleDecimalScale, DEFAULT_DECIMAL_SCALE)),
+    unitSymbol: saleUnit.symbol || 'u',
+    unitName: saleUnit.name ?? ''
   }
 }
 
