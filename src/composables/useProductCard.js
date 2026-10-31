@@ -1,6 +1,6 @@
 import { computed } from 'vue'
-import { formatCurrency } from '../utils/formatCurrency.js'
 import { getAvailableVariants } from './useProductVariants.js'
+import { formatMainPrice, formatWeightHint, getEffectiveUnitPrice } from '../utils/productPricing.js'
 
 export const useProductCard = (getProduct, getUnavailable) => {
   const product = computed(getProduct)
@@ -30,17 +30,19 @@ export const useProductCard = (getProduct, getUnavailable) => {
   })
   const unitPriceLabel = computed(() => {
     if (product.value.productType !== 'VARIANT') {
-      return `${formatCurrency(product.value.pricePerType, product.value.currency)} / ${product.value.unitSymbol ?? 'u'}`
+      return formatMainPrice(product.value)
     }
 
     const availablePrices = availableVariants.value
-      .map((variant) => Number(variant.pricePerUnit))
+      .map((variant) => getEffectiveUnitPrice(product.value, variant))
       .filter(Number.isFinite)
     if (availablePrices.length === 0) return ''
 
-    const price = formatCurrency(Math.min(...availablePrices), product.value.currency)
-    return `${availablePrices.length === 1 ? '' : 'Desde '}${price} / ${product.value.unitSymbol ?? 'u'}`
+    const firstVariant = availableVariants.value.find((variant) =>
+      getEffectiveUnitPrice(product.value, variant) === Math.min(...availablePrices))
+    return `${availablePrices.length === 1 ? '' : 'Desde '}${formatMainPrice(product.value, product.value.currency, firstVariant)}`
   })
+  const weightHint = computed(() => formatWeightHint(product.value, product.value.currency, singleAvailableVariant.value))
 
   return {
     actionProduct,
@@ -48,6 +50,7 @@ export const useProductCard = (getProduct, getUnavailable) => {
     availableVariants,
     singleAvailableVariant,
     unitPriceLabel,
+    weightHint,
     variantLabel
   }
 }

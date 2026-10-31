@@ -19,6 +19,16 @@ describe('quantityRules', () => {
     expect(readQuantityRules({})).toMatchObject({ minQuantity: 1, step: 1, unitSymbol: 'u', decimalScale: 0 })
   })
 
+  it('uses sale units and whole quantities for products priced by kg', () => {
+    expect(readQuantityRules({
+      pricingMode: 'WEIGHT_BASED_UNIT_PRICE',
+      unit: { symbol: 'kg', decimalScale: 3 },
+      saleUnit: { symbol: 'u', decimalScale: 0 },
+      minimumPurchaseQuantity: '1',
+      quantityIncrement: '1'
+    })).toMatchObject({ minQuantity: 1, step: 1, unitSymbol: 'u', decimalScale: 0 })
+  })
+
   it('formats quantities with the product unit', () => {
     expect(formatQuantity(0.5, { unitSymbol: 'kg', decimalScale: 3 })).toBe('500 g')
     expect(formatQuantity(1.5, { unitSymbol: 'kg', decimalScale: 3 })).toBe('1.5 kg')
