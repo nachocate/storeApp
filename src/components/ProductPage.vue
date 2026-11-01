@@ -1,6 +1,6 @@
 <script setup>
 import { computed, watch } from 'vue'
-import { formatCurrency } from '../utils/formatCurrency.js'
+import { formatMainPrice, formatWeightHint, getEffectiveUnitPrice } from '../utils/productPricing.js'
 import ProductActions from './ProductActions.vue'
 import ProductGallery from './ProductGallery.vue'
 import { useProductVariants } from '../composables/useProductVariants.js'
@@ -38,7 +38,7 @@ const actionProduct = computed(() => {
 
   return {
     ...props.product,
-    pricePerType: Number(selectedVariant.value.pricePerUnit),
+    pricePerType: getEffectiveUnitPrice(props.product, selectedVariant.value),
     maxQuantityPerOrder: selectedVariant.value.maxQuantityPerOrder == null
       ? props.product.maxQuantityPerOrder
       : Number(selectedVariant.value.maxQuantityPerOrder),
@@ -51,11 +51,13 @@ const unitPriceLabel = computed(() => {
   if (!props.product) return ''
   if (props.product.productType === 'VARIANT') {
     return selectedVariant.value
-      ? `${formatCurrency(Number(selectedVariant.value.pricePerUnit), props.product.currency)} / ${props.product.unitSymbol ?? 'u'}`
+      ? formatMainPrice(props.product, props.product.currency, selectedVariant.value)
       : 'Elegí las opciones para ver el precio'
   }
-  return `${formatCurrency(props.product.pricePerType, props.product.currency)} / ${props.product.unitSymbol ?? 'u'}`
+  return formatMainPrice(props.product)
 })
+
+const weightHint = computed(() => formatWeightHint(props.product, props.product.currency, selectedVariant.value))
 
 const fallbackIcon = computed(() => props.product?.imageFallback === 'pastry'
   ? 'pi pi-sparkles'
@@ -100,6 +102,7 @@ const fallbackIcon = computed(() => props.product?.imageFallback === 'pastry'
           <Tag :value="product.category" severity="primary" rounded class="product-page-category" />
           <h1>{{ product.name }}</h1>
           <p class="product-page-price">{{ unitPriceLabel }}</p>
+          <p v-if="weightHint" class="product-page-weight-hint">{{ weightHint }}</p>
           <p v-if="product.description" class="product-page-description">{{ product.description }}</p>
           <p v-else class="product-page-description product-page-description-empty">
             Este producto todavía no tiene descripción.
@@ -232,6 +235,12 @@ const fallbackIcon = computed(() => props.product?.imageFallback === 'pastry'
     margin: 0;
     font-size: 1.4rem;
     font-weight: 800;
+  }
+
+  .product-page-weight-hint {
+    margin: -0.45rem 0 0;
+    color: #526157;
+    font-size: 0.9rem;
   }
 
   .product-page-description {

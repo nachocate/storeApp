@@ -27,6 +27,7 @@ import { resolveStoreAssetUrl } from './utils/resolveStoreAssetUrl.js'
 import { takeMercadoPagoReturnPublicOrderId } from './utils/mercadoPagoReturn.js'
 import { consumeOrderTrackingTokenFromHash } from './utils/orderTrackingCredentials.js'
 import { readQuantityRules } from './utils/quantityRules.js'
+import { getEffectiveUnitPrice, isWeightBasedUnitPrice } from './utils/productPricing.js'
 import { isValidEmail } from './utils/invoiceData.js'
 import { isStoreCurrentlyOpen, normalizeWeeklyHours } from './utils/storeHours.js'
 import { blendColors, getContrastColor, getReadableColor, LIGHT_TEXT_COLOR } from './utils/contrast.js'
@@ -404,7 +405,7 @@ const normalizeApiProduct = (product) => {
     id: product.id,
     name: product.name,
     productType,
-    quantityType: decimalScale > 0 ? 'weight' : 'unit',
+    quantityType: isWeightBasedUnitPrice(product) ? 'unit' : decimalScale > 0 ? 'weight' : 'unit',
     description: product.description ?? '',
     image: images[0] ?? '',
     images,
@@ -415,7 +416,13 @@ const normalizeApiProduct = (product) => {
         : 'coffee',
     category,
     currency: product.currency ?? 'ARS',
-    pricePerType: Number(product.pricePerUnit),
+    pricePerType: getEffectiveUnitPrice(product),
+    pricePerUnit: product.pricePerUnit,
+    effectiveUnitPrice: product.effectiveUnitPrice,
+    pricingMode: product.pricingMode,
+    estimatedUnitWeightKg: product.estimatedUnitWeightKg,
+    unit: product.unit ?? null,
+    saleUnit: product.saleUnit ?? product.unit ?? null,
     maxQuantityPerOrder,
     isSoldOut: !isAvailable,
     isVisible: true,
@@ -1106,7 +1113,11 @@ onBeforeUnmount(() => {
               <div class="cart-item-header">
                 <h4>{{ item.name }}</h4>
                 <small v-if="item.variantLabel">{{ item.variantLabel }}</small>
-                <strong>{{ formatCartAmount(item.pricePerType * item.quantity) }}</strong>
+                <strong>{{ formatCartAmount(item.lineTotal ?? item.pricePerType * item.quantity) }}</strong>
+                <small>{{ formatCartQuantity(item.quantity, item) }} × {{ formatCartAmount(item.pricePerType) }}</small>
+                <small v-if="item.pricingMode === 'WEIGHT_BASED_UNIT_PRICE' && item.pricePerKg != null && item.estimatedUnitWeightKg != null">
+                  {{ formatCartAmount(item.pricePerKg) }}/{{ item.pricingUnitSymbol || 'kg' }} · {{ Number(item.estimatedUnitWeightKg) < 1 ? `${Math.round(Number(item.estimatedUnitWeightKg) * 1000)} g` : `${Number(item.estimatedUnitWeightKg)} kg` }} aprox. por unidad
+                </small>
               </div>
               <div class="cart-item-controls">
                 <Button

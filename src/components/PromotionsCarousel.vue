@@ -1,6 +1,7 @@
 <script setup>
 import { nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { formatCurrency } from '../utils/formatCurrency.js'
+import { formatEstimatedWeight } from '../utils/productPricing.js'
 
 const props = defineProps({
   promotions: { type: Array, required: true },
@@ -44,6 +45,12 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
 
 const hasDiscount = (promotion) => Number(promotion.discountAmount) > 0
 const showImage = (promotion) => promotion.image && !failedImages.value.includes(promotion.id)
+const weightHint = (item, currency) => {
+  if (item.pricingMode !== 'WEIGHT_BASED_UNIT_PRICE') return ''
+  const weight = formatEstimatedWeight(item.estimatedUnitWeightKg)
+  if (item.pricePerKg == null || !weight) return ''
+  return `${formatCurrency(item.pricePerKg, currency)}/${item.pricingUnitSymbol || 'kg'} · ${weight} aprox.`
+}
 </script>
 
 <template>
@@ -103,6 +110,7 @@ const showImage = (promotion) => promotion.image && !failedImages.value.includes
                   {{ item.quantity }}<template v-if="item.unitSymbol"> {{ item.unitSymbol }}</template>
                 </span>
                 {{ item.name }}
+                <small v-if="item.pricingMode === 'WEIGHT_BASED_UNIT_PRICE' && item.unitPrice !== null">{{ formatCurrency(item.unitPrice, promotion.currency) }} por unidad<span v-if="weightHint(item, promotion.currency)"> ({{ weightHint(item, promotion.currency) }})</span></small>
               </li>
             </ul>
             <div class="promotion-card-actions">
@@ -279,6 +287,13 @@ const showImage = (promotion) => promotion.image && !failedImages.value.includes
 
   .promotion-product-quantity {
     font-weight: 700;
+  }
+
+  .promotion-products small {
+    display: block;
+    margin-top: 0.1rem;
+    color: #526157;
+    font-size: 0.78rem;
   }
 
   .promotion-card-actions {

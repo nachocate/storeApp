@@ -20,7 +20,7 @@ const render = (props) => {
 }
 
 describe('ProductPage variants', () => {
-  it('preselects the first available variant when opening the product', async () => {
+  it('requires the customer to select a variant before showing purchase actions', async () => {
     const { app, container, onVariantChange } = render({
       product: {
         id: 1,
@@ -60,9 +60,9 @@ describe('ProductPage variants', () => {
     await nextTick()
 
     const selectedOptions = [...container.querySelectorAll('.product-variant-value[aria-pressed="true"]')]
-    expect(selectedOptions.map((button) => button.textContent.trim())).toEqual(['M', 'Blanco'])
-    expect(onVariantChange).toHaveBeenLastCalledWith(expect.objectContaining({ id: 45 }))
-    expect(container.querySelector('.product-page-actions')).not.toBeNull()
+    expect(selectedOptions).toHaveLength(0)
+    expect(onVariantChange).toHaveBeenLastCalledWith(null)
+    expect(container.querySelector('.product-page-actions')).toBeNull()
     app.unmount()
   })
 
@@ -111,7 +111,6 @@ describe('ProductPage variants', () => {
     })
 
     const [sizeOptions, colorOptions] = container.querySelectorAll('.product-variant-option')
-    expect(onVariantChange).toHaveBeenLastCalledWith(expect.objectContaining({ id: 45 }))
     sizeOptions.querySelectorAll('button')[1].click()
     await nextTick()
 

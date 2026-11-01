@@ -4,6 +4,7 @@ import { STORE_SLUG } from '../config/store.js'
 import { formatCurrency } from '../utils/formatCurrency.js'
 import { formatQuantity, roundQuantity } from '../utils/quantityRules.js'
 import { getBundleErrorMessage } from '../utils/normalizePromotion.js'
+import { getEffectiveUnitPrice, getSaleUnitSymbol, isWeightBasedUnitPrice } from '../utils/productPricing.js'
 
 const CART_STORAGE_KEY = `tiendario-cart-${encodeURIComponent(STORE_SLUG)}`
 
@@ -45,9 +46,15 @@ export const useVisitorCart = ({ products }) => {
         lineId: cartLineKey(product.id, entry.variantId),
         variantId: entry.variantId ?? null,
         variantLabel: entry.variantLabel ?? variant?.label ?? '',
-        pricePerType: variant
-          ? Number(variant.pricePerUnit)
-          : entry.unitPrice == null ? product.pricePerType : Number(entry.unitPrice),
+        pricePerType: entry.unitPrice == null
+          ? getEffectiveUnitPrice(product, variant)
+          : Number(entry.unitPrice),
+        lineTotal: entry.lineTotal == null ? null : Number(entry.lineTotal),
+        pricingMode: entry.pricingMode ?? product.pricingMode,
+        pricingUnitSymbol: entry.pricingUnitSymbol ?? product.unit?.symbol,
+        pricePerKg: entry.pricePerKg ?? null,
+        estimatedUnitWeightKg: entry.estimatedUnitWeightKg ?? variant?.estimatedUnitWeightKg ?? product.estimatedUnitWeightKg,
+        unitSymbol: entry.saleUnitSymbol ?? getSaleUnitSymbol(product),
         maxQuantityPerOrder: variant
           ? variant.maxQuantityPerOrder == null ? null : Number(variant.maxQuantityPerOrder)
           : product.maxQuantityPerOrder,
@@ -63,7 +70,7 @@ export const useVisitorCart = ({ products }) => {
   ))
 
   const localSubtotal = computed(() => cartItems.value.reduce(
-    (sum, item) => sum + item.pricePerType * item.quantity,
+    (sum, item) => sum + (item.lineTotal ?? item.pricePerType * item.quantity),
     0
   ))
 
@@ -228,10 +235,16 @@ export const useVisitorCart = ({ products }) => {
           id,
           ...(variantId == null ? {} : {
             variantId,
-            variantLabel: entry.variantLabel ?? entry.variant?.label ?? '',
-            ...(entry.unitPrice == null ? {} : { unitPrice: entry.unitPrice }),
-            ...(entry.name == null ? {} : { name: entry.name })
+            variantLabel: entry.variantLabel ?? entry.variant?.label ?? ''
           }),
+          ...(entry.unitPrice == null ? {} : { unitPrice: entry.unitPrice }),
+          ...(entry.lineTotal == null ? {} : { lineTotal: entry.lineTotal }),
+          ...(entry.name == null ? {} : { name: entry.name }),
+          ...(entry.saleUnitSymbol == null ? {} : { saleUnitSymbol: entry.saleUnitSymbol }),
+          ...(entry.pricingMode == null ? {} : { pricingMode: entry.pricingMode }),
+          ...(entry.pricingUnitSymbol == null ? {} : { pricingUnitSymbol: entry.pricingUnitSymbol }),
+          ...(entry.pricePerKg == null ? {} : { pricePerKg: entry.pricePerKg }),
+          ...(entry.estimatedUnitWeightKg == null ? {} : { estimatedUnitWeightKg: entry.estimatedUnitWeightKg }),
           quantity
         }]
         : []
@@ -248,8 +261,7 @@ export const useVisitorCart = ({ products }) => {
           id: mutation.productId,
           ...(mutation.variantId == null ? {} : {
             variantId: mutation.variantId,
-            variantLabel: variant?.label ?? '',
-            ...(variant?.pricePerUnit == null ? {} : { unitPrice: variant.pricePerUnit })
+            variantLabel: variant?.label ?? ''
           }),
           quantity: mutation.quantity
         })
@@ -333,7 +345,9 @@ export const useVisitorCart = ({ products }) => {
       body: removing
         ? { revision: cartRevision.value, ...(variantId == null ? {} : { variantId }) }
         : {
-          quantity: Number(quantity).toFixed(3),
+          quantity: isWeightBasedUnitPrice(products.find((product) => product.id === productId))
+            ? String(Math.round(Number(quantity)))
+            : Number(quantity).toFixed(3),
           revision: cartRevision.value,
           ...(variantId == null ? {} : { variantId })
         }
