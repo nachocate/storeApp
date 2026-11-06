@@ -2,8 +2,11 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { requestStoreApi } from '../api/store.js'
 import { STORE_SLUG } from '../config/store.js'
 import { formatCurrency } from '../utils/formatCurrency.js'
+import { formatQuantity, roundQuantity } from '../utils/quantityRules.js'
+import { getBundleErrorMessage } from '../utils/normalizePromotion.js'
+import { getEffectiveUnitPrice, getSaleUnitSymbol, isWeightBasedUnitPrice } from '../utils/productPricing.js'
 
-const CART_STORAGE_KEY = `vitrinapp-cart-${encodeURIComponent(STORE_SLUG)}`
+const CART_STORAGE_KEY = `tiendario-cart-${encodeURIComponent(STORE_SLUG)}`
 
 export const useVisitorCart = ({ products }) => {
   const cartToken = ref('')
@@ -18,24 +21,56 @@ export const useVisitorCart = ({ products }) => {
   })
   const cartError = ref('')
   const cartLoading = ref(false)
+  const cartInitializing = ref(false)
+  const busyProductIds = ref([])
+  const busyPromotionId = ref(null)
   const productQty = ref({})
   const cartMutations = new Map()
   let cartDebounceTimer = null
   let cartSyncPromise = null
 
+  const cartLineKey = (productId, variantId = null) => `${productId}:${variantId ?? ''}`
+  const isProductBusy = (productId, variantId = null) =>
+    busyProductIds.value.includes(cartLineKey(productId, variantId))
+  const getProductVariant = (product, variantId) =>
+    product?.variantConfiguration?.variants?.find((variant) => variant.id === variantId) ?? null
+
   const cartItems = computed(() => cart.value
     .map((entry) => {
       const product = products.find((item) => item.id === entry.id)
-      return product ? { ...product, quantity: entry.quantity } : null
+      if (!product) return null
+      const variant = entry.variantId == null ? null : getProductVariant(product, entry.variantId)
+      return {
+        ...product,
+        id: product.id,
+        lineId: cartLineKey(product.id, entry.variantId),
+        variantId: entry.variantId ?? null,
+        variantLabel: entry.variantLabel ?? variant?.label ?? '',
+        pricePerType: entry.unitPrice == null
+          ? getEffectiveUnitPrice(product, variant)
+          : Number(entry.unitPrice),
+        lineTotal: entry.lineTotal == null ? null : Number(entry.lineTotal),
+        pricingMode: entry.pricingMode ?? product.pricingMode,
+        pricingUnitSymbol: entry.pricingUnitSymbol ?? product.unit?.symbol,
+        pricePerKg: entry.pricePerKg ?? null,
+        estimatedUnitWeightKg: entry.estimatedUnitWeightKg ?? variant?.estimatedUnitWeightKg ?? product.estimatedUnitWeightKg,
+        unitSymbol: entry.saleUnitSymbol ?? getSaleUnitSymbol(product),
+        maxQuantityPerOrder: variant
+          ? variant.maxQuantityPerOrder == null ? null : Number(variant.maxQuantityPerOrder)
+          : product.maxQuantityPerOrder,
+        isSoldOut: variant ? !variant.available : entry.variantId != null || product.isSoldOut,
+        quantity: entry.quantity
+      }
     })
     .filter(Boolean))
 
-  const totalItems = computed(() => cartItems.value.reduce((sum, item) =>
-    sum + (item.productType === 'weight' ? 1 : item.quantity), 0
-  , 0))
+  const totalItems = computed(() => cartItems.value.reduce(
+    (sum, item) => sum + (item.quantityType === 'weight' || item.decimalScale > 0 ? 1 : item.quantity),
+    0
+  ))
 
   const localSubtotal = computed(() => cartItems.value.reduce(
-    (sum, item) => sum + item.pricePerType * item.quantity,
+    (sum, item) => sum + (item.lineTotal ?? item.pricePerType * item.quantity),
     0
   ))
 
@@ -57,7 +92,11 @@ export const useVisitorCart = ({ products }) => {
       window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify({
         token: cartToken.value,
         revision: cartRevision.value,
-        items: cart.value.map(({ id, quantity }) => ({ id, quantity }))
+        items: cart.value.map(({ id, variantId, quantity }) => ({
+          id,
+          ...(variantId == null ? {} : { variantId }),
+          quantity
+        }))
       }))
     } catch {
       // Storage can be unavailable in private browsing contexts.
@@ -88,16 +127,24 @@ export const useVisitorCart = ({ products }) => {
 
       const items = savedCart.items.flatMap((entry) => {
         const product = products.find((item) => item.id === entry.id)
+        const variant = entry.variantId == null ? null : getProductVariant(product, entry.variantId)
         const quantity = Number(entry.quantity)
-        if (!product || !Number.isFinite(quantity) || quantity <= 0) return []
+        if (!product || (product.productType === 'VARIANT' && (!variant || !variant.available)) ||
+          (entry.variantId != null && !variant) ||
+          !Number.isFinite(quantity) || quantity <= 0) return []
 
         const limit = Math.min(
-          product.stock ?? Number.POSITIVE_INFINITY,
-          product.maxQuantityPerOrder ?? Number.POSITIVE_INFINITY
+          variant
+            ? variant.maxQuantityPerOrder ?? Number.POSITIVE_INFINITY
+            : product.maxQuantityPerOrder ?? Number.POSITIVE_INFINITY
         )
-        if (limit < product.step) return []
+        if (limit < product.minQuantity) return []
 
-        return [{ id: product.id, quantity: Math.min(limit, Math.max(product.step, quantity)) }]
+        return [{
+          id: product.id,
+          ...(entry.variantId == null ? {} : { variantId: entry.variantId }),
+          quantity: Math.min(limit, Math.max(product.minQuantity, quantity))
+        }]
       })
 
       cartToken.value = savedCart.token
@@ -110,47 +157,38 @@ export const useVisitorCart = ({ products }) => {
     }
   }
 
-  const getProductLimit = (product) => Math.min(
-    product.stock ?? Number.POSITIVE_INFINITY,
-    product.maxQuantityPerOrder ?? Number.POSITIVE_INFINITY
+  const getProductLimit = (product, variantId = null) => Math.min(
+    variantId == null ? product.stock ?? Number.POSITIVE_INFINITY : Number.POSITIVE_INFINITY,
+    variantId == null
+      ? product.maxQuantityPerOrder ?? Number.POSITIVE_INFINITY
+      : getProductVariant(product, variantId)?.maxQuantityPerOrder ?? Number.POSITIVE_INFINITY
   )
 
-  const isUnavailable = (product) => product.isSoldOut || getProductLimit(product) <= 0
+  const isUnavailable = (product, variantId = null) => variantId == null
+    ? product.isSoldOut || getProductLimit(product) <= 0
+    : !getProductVariant(product, variantId)?.available || getProductLimit(product, variantId) <= 0
 
-  const getCartQuantity = (productId) =>
-    cart.value.find((item) => item.id === productId)?.quantity ?? 0
+  const getCartQuantity = (productId, variantId = null) =>
+    cart.value.find((item) => item.id === productId && (item.variantId ?? null) === variantId)?.quantity ?? 0
 
-  const getProductQuantity = (product) => {
-    const value = productQty.value[product.id]
+  const getProductQuantity = (product, variantId = null) => {
+    const key = cartLineKey(product.id, variantId)
+    const value = productQty.value[key]
     if (value !== undefined) return value
 
-    const cartQuantity = getCartQuantity(product.id)
+    const cartQuantity = getCartQuantity(product.id, variantId)
     const quantity = cartQuantity > 0 ? cartQuantity : product.quantity
-    productQty.value[product.id] = quantity
+    productQty.value[key] = quantity
     return quantity
   }
 
-  const isProductLimitReached = (product) =>
-    getProductQuantity(product) + product.step > getProductLimit(product)
+  const isProductLimitReached = (product, variantId = null) =>
+    getProductQuantity(product, variantId) + product.step > getProductLimit(product, variantId)
 
-  const formatQuantityLabel = (product) => {
-    const quantity = getProductQuantity(product)
-    if (product.productType === 'weight') {
-      return quantity >= 1
-        ? `${Number(quantity.toFixed(2))} kg`
-        : `${Math.round(quantity * 1000)} g`
-    }
-    return `${quantity.toFixed(0)} u`
-  }
+  const formatQuantityLabel = (product, variantId = null) =>
+    formatQuantity(getProductQuantity(product, variantId), product)
 
-  const formatCartQuantity = (quantity, productType) => {
-    if (productType === 'weight') {
-      return quantity >= 1
-        ? `${Number(quantity.toFixed(2))} kg`
-        : `${Math.round(quantity * 1000)} g`
-    }
-    return `${quantity.toFixed(0)} u`
-  }
+  const formatCartQuantity = (quantity, product) => formatQuantity(quantity, product)
 
   const formatCartAmount = (amount) => formatCurrency(amount, cartTotals.currency || 'ARS')
 
@@ -188,14 +226,51 @@ export const useVisitorCart = ({ products }) => {
     updateCartTotals(payload)
 
     if (!Array.isArray(data.items)) return
-    cart.value = data.items.flatMap((entry) => {
+    const snapshotItems = data.items.flatMap((entry) => {
       const id = entry.productId ?? entry.product?.id ?? entry.id
+      const variantId = entry.variantId ?? entry.variant?.id ?? null
       const quantity = Number(entry.quantity)
       return id != null && Number.isFinite(quantity) && quantity > 0
-        ? [{ id, quantity }]
+        ? [{
+          id,
+          ...(variantId == null ? {} : {
+            variantId,
+            variantLabel: entry.variantLabel ?? entry.variant?.label ?? ''
+          }),
+          ...(entry.unitPrice == null ? {} : { unitPrice: entry.unitPrice }),
+          ...(entry.lineTotal == null ? {} : { lineTotal: entry.lineTotal }),
+          ...(entry.name == null ? {} : { name: entry.name }),
+          ...(entry.saleUnitSymbol == null ? {} : { saleUnitSymbol: entry.saleUnitSymbol }),
+          ...(entry.pricingMode == null ? {} : { pricingMode: entry.pricingMode }),
+          ...(entry.pricingUnitSymbol == null ? {} : { pricingUnitSymbol: entry.pricingUnitSymbol }),
+          ...(entry.pricePerKg == null ? {} : { pricePerKg: entry.pricePerKg }),
+          ...(entry.estimatedUnitWeightKg == null ? {} : { estimatedUnitWeightKg: entry.estimatedUnitWeightKg }),
+          quantity
+        }]
         : []
     })
-    for (const item of cart.value) productQty.value[item.id] = item.quantity
+    const lines = new Map(snapshotItems.map((item) => [cartLineKey(item.id, item.variantId), item]))
+    for (const mutation of cartMutations.values()) {
+      const key = cartLineKey(mutation.productId, mutation.variantId)
+      if (mutation.quantity == null || mutation.quantity <= 0) {
+        lines.delete(key)
+      } else {
+        const product = products.find((item) => item.id === mutation.productId)
+        const variant = mutation.variantId == null ? null : getProductVariant(product, mutation.variantId)
+        lines.set(key, {
+          id: mutation.productId,
+          ...(mutation.variantId == null ? {} : {
+            variantId: mutation.variantId,
+            variantLabel: variant?.label ?? ''
+          }),
+          quantity: mutation.quantity
+        })
+      }
+    }
+    cart.value = [...lines.values()]
+    for (const item of cart.value) {
+      productQty.value[cartLineKey(item.id, item.variantId)] = item.quantity
+    }
   }
 
   const ensureCart = async () => {
@@ -228,6 +303,7 @@ export const useVisitorCart = ({ products }) => {
   }
 
   const initializeCart = async () => {
+    cartInitializing.value = true
     cartLoading.value = true
     cartError.value = ''
     try {
@@ -250,12 +326,13 @@ export const useVisitorCart = ({ products }) => {
         cartError.value = error.message || 'No se pudo crear o recuperar el carrito.'
       }
     } finally {
+      cartInitializing.value = false
       cartLoading.value = false
       persistCart()
     }
   }
 
-  const sendCartMutation = async (productId, quantity) => {
+  const sendCartMutation = async (productId, variantId, quantity) => {
     if ((quantity === null || quantity <= 0) && !cartToken.value) return
     await ensureCart()
     if (cartRevision.value === null) await refreshCurrentCart()
@@ -266,8 +343,14 @@ export const useVisitorCart = ({ products }) => {
       method: removing ? 'DELETE' : 'PUT',
       cartToken: cartToken.value,
       body: removing
-        ? { revision: cartRevision.value }
-        : { quantity: Number(quantity).toFixed(3), revision: cartRevision.value }
+        ? { revision: cartRevision.value, ...(variantId == null ? {} : { variantId }) }
+        : {
+          quantity: isWeightBasedUnitPrice(products.find((product) => product.id === productId))
+            ? String(Math.round(Number(quantity)))
+            : Number(quantity).toFixed(3),
+          revision: cartRevision.value,
+          ...(variantId == null ? {} : { variantId })
+        }
     })
     const previousRevision = cartRevision.value
     if (response) applyCartSnapshot(response)
@@ -287,11 +370,21 @@ export const useVisitorCart = ({ products }) => {
     cartSyncPromise = (async () => {
       try {
         while (cartMutations.size > 0) {
-          const [productId, quantity] = cartMutations.entries().next().value
-          cartMutations.delete(productId)
-          await sendCartMutation(productId, quantity)
+          const [key, mutation] = cartMutations.entries().next().value
+          cartMutations.delete(key)
+          if (!busyProductIds.value.includes(key)) {
+            busyProductIds.value = [...busyProductIds.value, key]
+          }
+          try {
+            await sendCartMutation(mutation.productId, mutation.variantId, mutation.quantity)
+          } finally {
+            if (!cartMutations.has(key)) {
+              busyProductIds.value = busyProductIds.value.filter((id) => id !== key)
+            }
+          }
         }
       } catch (error) {
+        cartMutations.clear()
         cartError.value = error.message || 'No se pudo actualizar el carrito.'
         if (cartToken.value) {
           try {
@@ -301,6 +394,7 @@ export const useVisitorCart = ({ products }) => {
           }
         }
       } finally {
+        busyProductIds.value = []
         cartLoading.value = false
         cartSyncPromise = null
         persistCart()
@@ -309,77 +403,140 @@ export const useVisitorCart = ({ products }) => {
     return cartSyncPromise
   }
 
-  const queueCartRequest = (productId, quantity) => {
-    cartMutations.set(productId, quantity)
+  const queueCartRequest = (productId, variantId, quantity) => {
+    cartMutations.set(cartLineKey(productId, variantId), { productId, variantId, quantity })
     if (cartDebounceTimer) clearTimeout(cartDebounceTimer)
     cartDebounceTimer = setTimeout(() => void flushCartRequests(), 350)
   }
 
-  const updateProductQuantity = (product, delta) => {
-    if (isUnavailable(product) || cartLoading.value) return
+  const updateProductQuantity = (product, delta, variantId = null) => {
+    if (isUnavailable(product, variantId) || cartInitializing.value || busyPromotionId.value !== null) return
 
-    const current = getProductQuantity(product)
+    const current = getProductQuantity(product, variantId)
     const next = Math.min(
-      getProductLimit(product),
-      Math.max(product.step, Number((current + delta).toFixed(2)))
+      getProductLimit(product, variantId),
+      Math.max(product.minQuantity, roundQuantity(current + delta, product.decimalScale))
     )
-    productQty.value[product.id] = next
 
-    const existing = cart.value.find((item) => item.id === product.id)
+    const existing = cart.value.find((item) =>
+      item.id === product.id && (item.variantId ?? null) === variantId
+    )
+    productQty.value[cartLineKey(product.id, variantId)] = next
     if (existing) {
       existing.quantity = next
-      queueCartRequest(product.id, next)
+      queueCartRequest(product.id, variantId, next)
     }
   }
 
-  const addToCart = (product) => {
-    if (isUnavailable(product) || cartLoading.value) return
+  const addToCart = (product, variantId = null) => {
+    if ((product.productType === 'VARIANT' && variantId == null) ||
+      isUnavailable(product, variantId) || cartInitializing.value || busyPromotionId.value !== null) return
 
-    const quantity = getProductQuantity(product)
-    const existing = cart.value.find((item) => item.id === product.id)
-    const nextQuantity = Math.min(getProductLimit(product), (existing?.quantity ?? 0) + quantity)
+    const lineKey = cartLineKey(product.id, variantId)
+    const quantity = getProductQuantity(product, variantId)
+    const existing = cart.value.find((item) =>
+      item.id === product.id && (item.variantId ?? null) === variantId
+    )
+    const nextQuantity = Math.min(getProductLimit(product, variantId), (existing?.quantity ?? 0) + quantity)
     if (nextQuantity <= (existing?.quantity ?? 0)) return
 
     if (existing) {
       existing.quantity = nextQuantity
     } else {
-      cart.value.push({ id: product.id, quantity: nextQuantity })
+      const variant = variantId == null ? null : getProductVariant(product, variantId)
+      cart.value.push({
+        id: product.id,
+        ...(variantId == null ? {} : { variantId, variantLabel: variant?.label ?? '' }),
+        quantity: nextQuantity
+      })
     }
-    productQty.value[product.id] = nextQuantity
-    queueCartRequest(product.id, nextQuantity)
+    productQty.value[lineKey] = nextQuantity
+    queueCartRequest(product.id, variantId, nextQuantity)
   }
 
-  const updateCart = (productId, delta) => {
+  const updateCart = (productId, delta, variantId = null) => {
     if (cartLoading.value) return
 
-    const item = cart.value.find((entry) => entry.id === productId)
+    const item = cart.value.find((entry) => entry.id === productId && (entry.variantId ?? null) === variantId)
     const product = products.find((entry) => entry.id === productId)
     if (!item || !product) return
 
-    const nextQuantity = Number((item.quantity + product.step * delta).toFixed(2))
+    const nextQuantity = roundQuantity(item.quantity + product.step * delta, product.decimalScale)
     if (nextQuantity === item.quantity) return
 
-    if (nextQuantity <= 0) {
-      cart.value = cart.value.filter((entry) => entry.id !== productId)
-      productQty.value[productId] = product.quantity
-      queueCartRequest(productId, null)
+    if (nextQuantity < product.minQuantity) {
+      cart.value = cart.value.filter((entry) =>
+        entry.id !== productId || (entry.variantId ?? null) !== variantId
+      )
+      productQty.value[cartLineKey(productId, variantId)] = product.quantity
+      queueCartRequest(productId, variantId, null)
       return
     }
 
-    item.quantity = Math.min(getProductLimit(product), nextQuantity)
-    productQty.value[productId] = item.quantity
-    queueCartRequest(productId, item.quantity)
+    item.quantity = Math.min(getProductLimit(product, variantId), nextQuantity)
+    productQty.value[cartLineKey(productId, variantId)] = item.quantity
+    queueCartRequest(productId, variantId, item.quantity)
   }
 
-  const removeItem = (productId) => {
+  const removeItem = (productId, variantId = null) => {
     if (cartLoading.value) return
     const product = products.find((entry) => entry.id === productId)
     if (!product) return
 
-    cart.value = cart.value.filter((entry) => entry.id !== productId)
-    productQty.value[productId] = product.step
-    queueCartRequest(productId, null)
+    cart.value = cart.value.filter((entry) =>
+      entry.id !== productId || (entry.variantId ?? null) !== variantId
+    )
+    productQty.value[cartLineKey(productId, variantId)] = product.minQuantity
+    queueCartRequest(productId, variantId, null)
   }
+
+  const sendPromotionBundle = async (promotionId, action) => {
+    await flushCartRequests()
+    await ensureCart()
+    if (cartRevision.value === null) await refreshCurrentCart()
+    if (cartRevision.value === null) throw new Error('La API no devolvió la revisión del carrito.')
+
+    const response = await requestStoreApi(
+      `/carts/current/promotion-bundles/${encodeURIComponent(promotionId)}/${action}`,
+      { method: 'POST', cartToken: cartToken.value, body: { revision: cartRevision.value } }
+    )
+    applyCartSnapshot(response)
+  }
+
+  // Bundle requests run one at a time so each one uses the revision returned by the previous one.
+  let bundleQueue = Promise.resolve()
+  const mutatePromotionBundle = (promotionId, action) => {
+    const run = async () => {
+      cartLoading.value = true
+      cartError.value = ''
+      busyPromotionId.value = promotionId
+      try {
+        await sendPromotionBundle(promotionId, action)
+        return { ok: true }
+      } catch (error) {
+        // A conflict may leave the local cart stale; the user retries manually.
+        if (error.code === 'cart_revision_conflict' && cartToken.value) {
+          try {
+            await refreshCurrentCart()
+          } catch {
+            // Keep the last known cart visible when recovery is unavailable.
+          }
+        }
+        cartError.value = ''
+        return { ok: false, code: error.code, message: getBundleErrorMessage(error) }
+      } finally {
+        busyPromotionId.value = null
+        cartLoading.value = false
+        persistCart()
+      }
+    }
+    const result = bundleQueue.then(run)
+    bundleQueue = result
+    return result
+  }
+
+  const addPromotionBundle = (promotionId) => mutatePromotionBundle(promotionId, 'add')
+  const removePromotionBundle = (promotionId) => mutatePromotionBundle(promotionId, 'remove')
 
   const clearCompletedCart = (order) => {
     if (!order || order.cartToken !== cartToken.value) return
@@ -391,10 +548,13 @@ export const useVisitorCart = ({ products }) => {
   })
 
   return {
+    addPromotionBundle,
     addToCart,
+    busyPromotionId,
     cart,
     cartError,
     cartItems,
+    cartInitializing,
     cartLoading,
     cartRevision,
     cartToken,
@@ -410,11 +570,13 @@ export const useVisitorCart = ({ products }) => {
     getProductQuantity,
     hasSavedCartItems,
     initializeCart,
+    isProductBusy,
     isProductLimitReached,
     isUnavailable,
     productQty,
     refreshCurrentCart,
     removeItem,
+    removePromotionBundle,
     restoreCart,
     subtotal,
     totalAmount,

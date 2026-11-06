@@ -1,11 +1,14 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
+import { useProductCard } from '../composables/useProductCard.js'
+import ProductActions from './ProductActions.vue'
 
 const props = defineProps({
   product: { type: Object, required: true },
   quantityLabel: { type: String, required: true },
   storeClosed: { type: Boolean, default: false },
   busy: { type: Boolean, default: false },
+  locked: { type: Boolean, default: false },
   inCart: { type: Boolean, default: false },
   decreaseRemovesItem: { type: Boolean, default: false },
   unavailable: { type: Boolean, default: false },
@@ -13,29 +16,23 @@ const props = defineProps({
   increaseDisabled: { type: Boolean, default: false }
 })
 
-defineEmits(['change-quantity', 'add-to-cart', 'remove-from-cart'])
+defineEmits(['change-quantity', 'add-to-cart', 'remove-from-cart', 'open'])
 
-const displayInCart = ref(props.inCart)
 const imageFailed = ref(false)
-const hoveredQuantityControl = ref('')
 
-watch(() => [props.inCart, props.busy], ([inCart, busy]) => {
-  if (!busy) displayInCart.value = inCart
-}, { immediate: true })
 watch(() => props.product.image, () => {
   imageFailed.value = false
 })
 
-const unitPriceLabel = computed(() =>
-  `$${props.product.pricePerType.toFixed(2)} / ${props.product.productType === 'weight' ? 'kg' : 'u'}`)
-
-const addAriaLabel = computed(() => props.busy
-  ? 'Procesando producto'
-  : props.inCart
-    ? `Añadido ${props.product.name}`
-    : props.product.isSoldOut
-      ? `Agotado ${props.product.name}`
-      : `Añadir ${props.product.name}`)
+const {
+  actionProduct,
+  actionUnavailable,
+  availableVariants,
+  singleAvailableVariant,
+  unitPriceLabel,
+  weightHint,
+  variantLabel
+} = useProductCard(() => props.product, () => props.unavailable)
 </script>
 
 <template>
@@ -43,60 +40,67 @@ const addAriaLabel = computed(() => props.busy
     <template #header>
       <img
         v-if="product.image && !imageFailed"
-        class="product-image"
+        class="product-image product-image-clickable"
         :src="product.image"
         :alt="product.name"
         loading="lazy"
+        @click="$emit('open')"
         @error="imageFailed = true"
       />
-      <div v-else class="product-image product-image-fallback" role="img" :aria-label="`Imagen de ${product.name} no disponible`">
+      <div v-else class="product-image product-image-fallback product-image-clickable" role="img" :aria-label="`Imagen de ${product.name} no disponible`" @click="$emit('open')">
         <i :class="product.imageFallback === 'pastry' ? 'pi pi-sparkles' : product.imageFallback === 'accessory' ? 'pi pi-gift' : 'pi pi-shopping-bag'" aria-hidden="true"></i>
       </div>
       <Tag :value="product.category" severity="primary" rounded class="category-badge" />
-      <small class="product-price-base image-price">{{ unitPriceLabel }}</small>
-      <Button
-        v-if="!storeClosed"
-        class="add-fab"
-        type="button"
-        rounded
-        :disabled="busy || inCart || unavailable"
-        :aria-label="addAriaLabel"
-        :icon="busy ? undefined : displayInCart ? 'pi pi-check' : 'pi pi-cart-plus'"
-        :loading="busy"
-        @click="$emit('add-to-cart')"
-      />
     </template>
 
     <template #content>
       <div class="product-body">
-      <h3>{{ product.name }}</h3>
-      <p class="product-description">{{ product.description }}</p>
+      <h3>
+        <button type="button" class="product-link" @click="$emit('open')">{{ product.name }}</button>
+      </h3>
+      <div v-if="product.description" class="product-description-container">
+        <p class="product-description">{{ product.description }}</p>
+        <button
+          type="button"
+          class="product-description-more"
+          :aria-label="`Leer descripción completa de ${product.name}`"
+          @click="$emit('open')"
+        >
+          Ver más...
+        </button>
+      </div>
+      <div class="product-card-actions">
+        <p v-if="variantLabel" class="product-variant-label">{{ variantLabel }}</p>
+        <template v-if="weightHint">
+          <p class="product-weight-hint">{{ weightHint }}</p>
+          <p v-if="unitPriceLabel" class="product-prices"><strong>{{ unitPriceLabel }}</strong></p>
+        </template>
+        <p v-else-if="unitPriceLabel" class="product-prices"><strong>{{ unitPriceLabel }}</strong></p>
 
-      <div v-if="!storeClosed" class="product-quantity" aria-label="Seleccionar cantidad">
         <Button
+          v-if="product.productType === 'VARIANT' && availableVariants.length > 0"
+          class="add-to-cart"
           type="button"
-          :disabled="busy || (unavailable && !decreaseRemovesItem) || decreaseDisabled"
-          :aria-label="decreaseRemovesItem ? `Eliminar ${product.name} del carrito` : `Reducir cantidad de ${product.name}`"
-          :icon="decreaseRemovesItem ? 'pi pi-trash' : 'pi pi-minus'"
-          severity="secondary"
-          :text="hoveredQuantityControl !== 'decrease'"
-          rounded
-          @mouseenter="hoveredQuantityControl = 'decrease'"
-          @mouseleave="hoveredQuantityControl = ''"
-          @click="decreaseRemovesItem ? $emit('remove-from-cart') : $emit('change-quantity', -product.step)"
+          :disabled="storeClosed"
+          label="Elegir opciones"
+          icon="pi pi-sliders-h"
+          @click="$emit('open')"
         />
-        <span>{{ quantityLabel }}</span>
-        <Button
-          type="button"
-          :disabled="busy || unavailable || increaseDisabled"
-          :aria-label="`Aumentar cantidad de ${product.name}`"
-          icon="pi pi-plus"
-          severity="secondary"
-          :text="hoveredQuantityControl !== 'increase'"
-          rounded
-          @mouseenter="hoveredQuantityControl = 'increase'"
-          @mouseleave="hoveredQuantityControl = ''"
-          @click="$emit('change-quantity', product.step)"
+        <ProductActions
+          v-else
+          :product="actionProduct"
+          :quantity-label="quantityLabel"
+          :store-closed="storeClosed"
+          :busy="busy"
+          :locked="locked"
+          :in-cart="availableVariants.length === 0 && product.productType === 'VARIANT' ? false : inCart"
+          :decrease-removes-item="decreaseRemovesItem"
+          :unavailable="actionUnavailable"
+          :decrease-disabled="decreaseDisabled"
+          :increase-disabled="increaseDisabled"
+          @change-quantity="$emit('change-quantity', $event)"
+          @add-to-cart="$emit('add-to-cart', singleAvailableVariant?.id ?? null)"
+          @remove-from-cart="$emit('remove-from-cart', singleAvailableVariant?.id ?? null)"
         />
       </div>
 
@@ -204,62 +208,123 @@ const addAriaLabel = computed(() => props.busy
     padding: 1rem;
   }
 
-  .product-price-base {
-    color: #4b5563;
-    font-size: 0.72rem;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-  }
-
-  .image-price {
-    position: absolute;
-    left: 0.6rem;
-    bottom: 0.6rem;
-    z-index: 1;
-    padding: 0;
-    color: var(--p-primary-contrast-color);
-    font-size: 1rem;
-    font-weight: 800;
-  }
-
   .product-card h3 {
+    width: 100%;
     margin: 0;
     font-size: 1.2rem;
     line-height: 1.3;
     color: #111827;
+    text-align: left;
+  }
+
+  .product-card .product-link {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: inherit;
+    cursor: pointer;
+  }
+
+  .product-card .product-link:hover {
+    text-decoration: underline;
+  }
+
+  .product-card .product-link:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+  }
+
+  .product-card-actions {
+    display: flex;
+    width: 100%;
+    flex-direction: column;
+    gap: 0.6rem;
+    margin-top: auto;
+  }
+
+  .product-prices {
+    display: flex;
+    width: 100%;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin: 0;
+    color: #111827;
+  }
+
+  .product-prices strong {
+    font-size: 1.15rem;
+  }
+
+  .product-variant-label {
+    width: 100%;
+    margin: 0;
+    color: #4b5563;
+    font-size: inherit;
+    line-height: 1.5;
+    text-align: left;
+  }
+
+  .product-weight-hint {
+    width: 100%;
+    margin: 0;
+    color: #4b5563;
+    font-size: 0.82rem;
+    line-height: 1.4;
+  }
+
+  .product-card .add-to-cart.p-button {
+    width: 100%;
+    min-height: 3rem;
+    margin-top: 0;
+    border-radius: 12px;
+    font-weight: 700;
+  }
+
+  .product-card-actions :deep(.product-quantity) {
+    margin-top: 0;
+  }
+
+  .product-image-clickable {
+    cursor: pointer;
   }
 
   .product-description {
     margin: 0;
-    max-height: 4.5em;
-    overflow-y: auto;
-    overscroll-behavior: contain;
+    display: -webkit-box;
+    overflow: hidden;
     color: #4b5563;
     line-height: 1.5;
-    scrollbar-color: #9ca3af transparent;
-    scrollbar-width: thin;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    text-align: left;
+    width: 100%;
   }
 
-  .product-quantity {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.8rem;
-    padding: 0.5rem 0.7rem;
-    border-radius: 12px;
-    background: color-mix(in srgb, var(--secondary-color) 20%, #fff);
-    border: 1px solid color-mix(in srgb, var(--secondary-color) 52%, #fff);
+  .product-description-container {
+    width: 100%;
+    text-align: left;
+  }
+
+  .product-description-more {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--primary-color);
+    font: inherit;
     font-weight: 700;
+    cursor: pointer;
   }
 
-  .product-quantity :deep(.p-button) {
-    width: 2rem;
-    height: 2rem;
-    color: var(--primary-text-color);
+  .product-description-more:hover {
+    text-decoration: underline;
   }
 
-  .product-quantity :deep(.p-button:focus-visible) {
-    box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--primary-color) 26%, transparent);
+  .product-description-more:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
   }
 
   .category-badge {
@@ -268,27 +333,6 @@ const addAriaLabel = computed(() => props.busy
     right: 0.6rem;
     z-index: 1;
     font-size: 0.72rem;
-  }
-
-  .product-card .add-fab.p-button {
-    position: absolute;
-    right: 0.75rem;
-    bottom: 0.75rem;
-    z-index: 1;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 3.5rem;
-    height: 3.5rem;
-    flex: none;
-    aspect-ratio: 1 / 1;
-    padding: 0;
-    border-radius: 50%;
-    box-shadow: 0 6px 14px rgba(0, 0, 0, 0.25);
-  }
-
-  .add-fab :deep(.p-button-icon) {
-    font-size: 1.4rem;
   }
 
   @media (max-width: 900px) {
@@ -300,6 +344,10 @@ const addAriaLabel = computed(() => props.busy
       text-align: center;
     }
 
+    .product-card .product-card-actions {
+      gap: 0.6rem;
+    }
+
     .product-card .category-badge {
       top: 0.4rem;
       right: 0.4rem;
@@ -307,28 +355,15 @@ const addAriaLabel = computed(() => props.busy
       font-size: 0.6rem;
     }
 
-    .product-card .add-fab.p-button {
-      right: 0.5rem;
-      bottom: 0.5rem;
-      width: 2.5rem;
-      height: 2.5rem;
-    }
-
-    .product-card .add-fab :deep(.p-button-icon) {
-      font-size: 1.1rem;
-    }
-
-    .product-card .image-price {
-      left: 0.4rem;
-      bottom: 0.4rem;
-      padding: 0;
+    .product-card .add-to-cart.p-button {
+      min-height: 2.5rem;
       font-size: 0.85rem;
     }
 
-    .product-card .product-description {
+    .product-card .product-description,
+    .product-card .product-variant-label {
       font-size: 0.8rem;
       line-height: 1.4;
-      max-height: 4.2em;
     }
 
     .product-card h3 {

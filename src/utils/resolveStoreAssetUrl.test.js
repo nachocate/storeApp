@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { API_BASE_URL } from '../config/store.js'
 import { resolveStoreAssetUrl } from './resolveStoreAssetUrl.js'
 
 describe('resolveStoreAssetUrl', () => {
+  const apiBaseUrl = 'https://api.example.com'
+
   it('resolves root-relative API media URLs against the configured API host', () => {
-    expect(resolveStoreAssetUrl('/media/stores/logo.png'))
-      .toBe(`${API_BASE_URL}/media/stores/logo.png`)
+    expect(resolveStoreAssetUrl('/media/stores/logo.png', apiBaseUrl))
+      .toBe(`${apiBaseUrl}/media/stores/logo.png`)
   })
 
   it('resolves path-relative API media URLs against the configured API host', () => {
-    expect(resolveStoreAssetUrl('media/products/item.png'))
-      .toBe(`${API_BASE_URL}/media/products/item.png`)
+    expect(resolveStoreAssetUrl('media/products/item.png', apiBaseUrl))
+      .toBe(`${apiBaseUrl}/media/products/item.png`)
   })
 
   it('preserves absolute URLs and rejects empty or unsupported URLs', () => {

@@ -1,0 +1,52 @@
+/* Shared look for the Tiendario marketing pages (welcome and contact). */
+.tiendario-site {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  padding: 0 clamp(1.25rem, 5vw, 5rem);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: 'Montserrat', sans-serif;
+}
+
+.tiendario-site .p-button.tiendario-button {
+  min-height: 3rem;
+  border-radius: 12px;
+  font-size: 0.86rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.tiendario-site .p-button.tiendario-button--primary {
+  border-color: var(--tiendario-secondary);
+  background: var(--tiendario-secondary);
+  color: var(--paper);
+  font-weight: 800;
+}
+
+.tiendario-site .p-button.tiendario-button--outline {
+  border-color: var(--paper);
+  background: transparent;
+  color: var(--paper);
+}
+
+.tiendario-site .p-button.tiendario-button:not(:disabled):hover {
+  border-color: var(--tiendario-secondary);
+  background: var(--paper);
+  color: var(--tiendario-secondary);
+}
+
+.tiendario-site .p-button.tiendario-button:focus-visible {
+  outline: 3px solid var(--tiendario-primary);
+  outline-offset: 4px;
+}
+
+.tiendario-site .p-button.tiendario-button--outline:focus-visible {
+  outline-color: var(--paper);
+}
+
+@media (max-width: 640px) {
+  .tiendario-site {
+    padding: 0 1rem;
+  }
+}

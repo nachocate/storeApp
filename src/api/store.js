@@ -1,4 +1,5 @@
 import { STORE_SLUG } from '../config/store.js'
+import { requestApi } from './client.js'
 
 export const storeApiPath = `/api/v1/stores/${encodeURIComponent(STORE_SLUG)}`
 
@@ -10,10 +11,9 @@ export const requestStoreApi = async (path, {
   formData,
   query
 } = {}) => {
-  const headers = { Accept: 'application/json' }
+  const headers = {}
   if (cartToken) headers['X-Cart-Token'] = cartToken
   if (orderTrackingToken) headers['X-Order-Tracking-Token'] = orderTrackingToken
-  if (body !== undefined) headers['Content-Type'] = 'application/json'
 
   const queryString = query
     ? new URLSearchParams(Object.entries(query)
@@ -23,29 +23,5 @@ export const requestStoreApi = async (path, {
   const querySeparator = path.includes('?') ? '&' : '?'
   const url = `${storeApiPath}${path}${queryString ? `${querySeparator}${queryString}` : ''}`
 
-  const response = await fetch(url, {
-    method,
-    headers,
-    ...(formData !== undefined
-      ? { body: formData }
-      : body === undefined
-        ? {}
-        : { body: JSON.stringify(body) })
-  })
-
-  if (!response.ok) {
-    let message = `Error de API (${response.status})`
-    try {
-      const payload = await response.json()
-      message = payload.message ?? payload.error ?? message
-    } catch {
-      // The response may not contain JSON.
-    }
-    const error = new Error(message)
-    error.status = response.status
-    throw error
-  }
-
-  if (response.status === 204) return null
-  return response.json()
+  return requestApi(url, { method, headers, body, formData })
 }
